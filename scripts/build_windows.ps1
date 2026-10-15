@@ -3,6 +3,9 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
 python -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw "Python dependency install failed" }
+python scripts/prepare_icon.py
+if ($LASTEXITCODE -ne 0) { throw "Icon generation failed" }
 Push-Location frontend
 try {
     npm install --no-audit --no-fund
@@ -19,6 +22,8 @@ $argsList = @(
     "--windows-console-mode=disable",
     "--output-dir=build",
     "--output-filename=SparePartsManagement.exe",
+    "--windows-icon-from-ico=assets/spare_parts.ico",
+    "--include-data-file=assets/spare_parts.ico=assets/spare_parts.ico",
     "--include-package=config",
     "--include-package=inventory",
     "--include-package=django",

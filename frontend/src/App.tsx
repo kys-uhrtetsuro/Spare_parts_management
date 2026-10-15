@@ -1,4 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react'
+import appIcon from './assets/spare_parts.png'
 
 type System = { id: number; name: string }
 type Equipment = { id: number; name: string; alias: string }
@@ -268,7 +269,7 @@ export default function App() {
 
   return <div className="app">
     <aside className="sidebar">
-      <div className="brand"><div className="brandmark">S</div><div><strong>SPARE PARTS</strong><small>予備品管理システム</small></div></div>
+      <div className="brand"><div className="brandmark"><img src={appIcon} alt="" aria-hidden="true" /></div><div><strong>SPARE PARTS</strong><small>予備品管理システム</small></div></div>
       <p className="nav-label">メニュー</p>
       <nav>{views.map(v => <button key={v.id} className={'navitem ' + (tab === v.id ? 'active' : '')} onClick={() => { setTab(v.id); setQuery(''); setError(''); setNotice('') }}>{v.label}</button>)}</nav>
       

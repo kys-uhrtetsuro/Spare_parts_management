@@ -51,6 +51,13 @@
 - Linux Djangoテスト・Reactビルド・Playwrightは先行コミットで成功
 - 最新版Windows standalone配布ZIPのGit自動登録はビルド結果待ち
 
+## アプリアイコン
+- 生成した歯車・予備品ボックスの図柄をアイコン原本として追加
+- `scripts/prepare_icon.py` が原本からReact用PNG・複数サイズICOを生成
+- Reactサイドバー・favicon・Windows EXEリソースで共通使用
+- Windowsビルド成功後、生成したPNG/ICOと配布用ZIPをGitに登録
+- 最新EXEでのWindows実機アイコン反映は検証待ち
+
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

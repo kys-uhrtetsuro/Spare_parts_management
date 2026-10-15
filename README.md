@@ -30,6 +30,9 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 cd frontend
 npm install
+cd ..
+python scripts/prepare_icon.py
+cd frontend
 npm run build
 cd ..
 python backend/manage.py migrate
@@ -45,6 +48,19 @@ Djangoの自動テスト:
 python backend/manage.py test inventory
 python backend/manage.py makemigrations --check --dry-run
 ~~~
+
+## アイコン生成
+
+歯車と予備品ボックスのアイコンを、GUI・ブラウザfavicon・EXEで共通使用する。
+原本は `assets/spare_parts_icon.webp.b64`。初期実行またはビルド前に生成する。
+
+~~~powershell
+python scripts/prepare_icon.py
+~~~
+
+生成物は `frontend/src/assets/spare_parts.png` と `assets/spare_parts.ico`。
+後者は16/24/32/48/64/128/256pxを含み、NuitkaがEXEのアイコンリソースに埋め込む。
+Windowsビルド成功時に生成物もGitへコミットする。
 
 ## Windows EXE作成
 

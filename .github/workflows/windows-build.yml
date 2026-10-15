@@ -58,8 +58,9 @@ jobs:
           $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actions standaloneビルド成功・配布ZIPをGit登録済み | GUI実機は未確認 |'
           $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\r?\n', ''
           $progress += "`n- 配布成果物ビルド元: $localHead`n"
+          $progress += "- EXEアイコン: gear / spare parts box（256〜16px、EXEに埋込み）`n"
           Set-Content -Path $progressPath -Value $progress -Encoding UTF8
-          git add releases/SparePartsManagement-standalone.zip docs/progress.md
+          git add releases/SparePartsManagement-standalone.zip docs/progress.md assets/spare_parts.ico frontend/src/assets/spare_parts.png
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) {
             Write-Host '成果物に変更はありません'

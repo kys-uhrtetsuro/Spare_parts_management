@@ -4,3 +4,4 @@ pywebview==6.2
 pandas==3.0.6
 openpyxl==3.1.5
 Nuitka==4.2.2
+Pillow==12.3.0

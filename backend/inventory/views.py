@@ -360,3 +360,12 @@ def asset(request, filepath):
         return HttpResponse(status=404)
     mime, _ = mimetypes.guess_type(target.name)
     return FileResponse(target.open("rb"), content_type=mime or "application/octet-stream")
+
+
+@endpoint(["GET"])
+def favicon(request):
+    """Serve the exact ICO bundled into the native Windows executable."""
+    icon = settings.BASE_DIR / "assets" / "spare_parts.ico"
+    if not icon.is_file():
+        return HttpResponse(status=404)
+    return FileResponse(icon.open("rb"), content_type="image/x-icon")

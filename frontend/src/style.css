@@ -10,3 +10,6 @@
 .part-picker-table table{min-width:500px}
 
 .lineage-tag{display:block;color:#466687;font-size:11px;margin:2px 0;white-space:nowrap}
+
+.brandmark{overflow:hidden;background:transparent}
+.brandmark img{width:100%;height:100%;object-fit:cover;display:block;border-radius:10px}

@@ -41,6 +41,39 @@ def free_port():
         return sock.getsockname()[1]
 
 
+
+def set_windows_window_icon(icon_path):
+    """Assign Windows small/big title-bar icons without pywebview internals."""
+    if os.name != "nt" or not icon_path.is_file():
+        return
+    try:
+        import ctypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        user32.FindWindowW.restype = ctypes.c_void_p
+        hwnd = user32.FindWindowW(None, "予備品管理システム")
+        if not hwnd:
+            return
+
+        user32.LoadImageW.argtypes = [
+            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
+            ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+        ]
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
+        ]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+        for slot, size in ((0, 16), (1, 32)):
+            # IMAGE_ICON=1, LR_LOADFROMFILE=0x10, WM_SETICON=0x80
+            handle = user32.LoadImageW(None, str(icon_path), 1, size, size, 0x10)
+            if handle:
+                user32.SendMessageW(hwnd, 0x80, slot, handle)
+    except OSError:
+        # Cosmetic failure must never prevent the application from starting.
+        pass
+
+
 def main():
     app_root = application_paths()
     data_dir = app_root / "data"
@@ -72,8 +105,11 @@ def main():
         raise RuntimeError("ローカルサーバーを起動できませんでした")
 
     try:
-        webview.create_window(
+        window = webview.create_window(
             "予備品管理システム", url, width=1320, height=850, min_size=(900, 620)
+        )
+        window.events.shown += lambda: set_windows_window_icon(
+            Path(os.environ["SPARES_RESOURCE_DIR"]) / "assets" / "spare_parts.ico"
         )
         webview.start(gui="edgechromium")
     finally:
