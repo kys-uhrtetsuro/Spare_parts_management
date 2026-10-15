@@ -151,6 +151,12 @@
 - [実機検証待ち] ユーザーPCで無反応となるEXEのログから停止段階を特定（旧EXEはログ機能未搭載）
 - [配布] 新版EXEのビルド成功・Windows実機起動は未確認
 
+## Onefile外部データの一本化
+- [実装] Djangoの秘密鍵を`inventory.sqlite3`内の`spareparts_configuration`テーブルに保存。データ保持に必要なファイルはSQLiteのみ
+- [実装] 旧`.django-secret`があれば秘密鍵をSQLiteへ移植し、保存完了後に旧ファイルを整理
+- [維持] `data/startup.log`（診断ログ）と`.instance.lock`（起動ロック）は補助ファイルとして自動生成。既存のDB・データは変更しない
+- [検証待ち] 統合後のWindows Onefile実機動作、既存DB・秘密鍵の維持
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

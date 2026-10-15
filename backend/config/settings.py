@@ -5,11 +5,50 @@ BASE_DIR = Path(os.environ.get("SPARES_RESOURCE_DIR", Path(__file__).resolve().p
 DATA_DIR = Path(os.environ.get("SPARES_DATA_DIR", BASE_DIR / "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-key_file = DATA_DIR / ".django-secret"
-if not key_file.exists():
+def load_secret_key():
+    """Persist the stable per-installation Django secret inside the SQLite DB.
+
+    This keeps SQLite as the only mandatory writable external application file.
+    When upgrading from standalone, migrate the previous .django-secret value
+    before deleting that legacy file.
+    """
+    import sqlite3
+
     from django.core.management.utils import get_random_secret_key
-    key_file.write_text(get_random_secret_key(), encoding="utf-8")
-SECRET_KEY = key_file.read_text(encoding="utf-8").strip()
+
+    legacy = DATA_DIR / ".django-secret"
+    db = DATA_DIR / "inventory.sqlite3"
+    with sqlite3.connect(db, timeout=20) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS spareparts_configuration "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        row = conn.execute(
+            "SELECT value FROM spareparts_configuration WHERE key = 'django_secret'"
+        ).fetchone()
+        if row is None:
+            existing_key = legacy.read_text(encoding="utf-8").strip() if legacy.is_file() else ""
+            value = existing_key or get_random_secret_key()
+            conn.execute(
+                "INSERT OR IGNORE INTO spareparts_configuration (key, value) VALUES (?, ?)",
+                ("django_secret", value),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT value FROM spareparts_configuration WHERE key = 'django_secret'"
+            ).fetchone()
+    if legacy.is_file():
+        # The old value is now recoverable with the database's normal backups.
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+    if not row or not row[0]:
+        raise RuntimeError("SQLiteにDjango秘密鍵を保存できませんでした")
+    return row[0]
+
+
+SECRET_KEY = load_secret_key()
 
 DEBUG = False
 ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
