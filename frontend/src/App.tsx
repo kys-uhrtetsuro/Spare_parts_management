@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useState } from 'react'
 
 type System = { id: number; name: string }
 type Equipment = { id: number; name: string; alias: string }
