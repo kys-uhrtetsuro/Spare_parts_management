@@ -143,6 +143,14 @@
 - [実装] 旧standalone ZIPは新しい成果物登録時に配布フォルダから削除する
 - [検証待ち] Windows実機Onefile起動、初回DB作成、EXE差替後のDB保持
 
+## 起動不具合の最小診断修正（2026-10-15）
+- [修正] マイグレーションをWaitress/pywebviewのimportより先に実行
+- [修正] `data/startup.log` に起動段階と日時、例外発生時の完全なトレースバックを記録
+- [修正] 例外時・通常終了時にインスタンスロックとサーバーをfinallyで解放
+- [テスト] SQLiteマイグレーション段階で意図的に例外を発生させ、ログ記録と処理順を自動検証
+- [実機検証待ち] ユーザーPCで無反応となるEXEのログから停止段階を特定（旧EXEはログ機能未搭載）
+- [配布] 新版EXEのビルド成功・Windows実機起動は未確認
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

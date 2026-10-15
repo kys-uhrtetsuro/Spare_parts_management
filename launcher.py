@@ -1,4 +1,5 @@
 """Windows desktop entrypoint, Python 3.12 / Nuitka."""
+import logging
 import os
 import socket
 import sys
@@ -82,39 +83,70 @@ def main():
     app_root = application_paths()
     data_dir = app_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    instance_lock = single_instance(data_dir)
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
-    import django
-    django.setup()
-    from django.core.management import call_command
-    from django.core.wsgi import get_wsgi_application
-    from waitress import create_server
-    import webview
 
-    call_command("migrate", interactive=False, verbosity=0)
-    port = free_port()
-    server = create_server(
-        get_wsgi_application(), host="127.0.0.1", port=port, threads=4
-    )
-    threading.Thread(target=server.run, name="django-waitress", daemon=True).start()
-    url = f"http://127.0.0.1:{port}/"
-    for _ in range(100):
-        try:
-            with urllib.request.urlopen(url + "api/health", timeout=0.2) as r:
-                if r.status == 200:
-                    break
-        except (OSError, TimeoutError):
-            time.sleep(0.05)
-    else:
-        raise RuntimeError("ローカルサーバーを起動できませんでした")
-
+    # A console-less Nuitka EXE must keep startup failures readable.
+    startup_log = logging.getLogger("spares.startup")
+    handler = logging.FileHandler(data_dir / "startup.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    startup_log.addHandler(handler)
+    startup_log.setLevel(logging.INFO)
+    startup_log.propagate = False
+    instance_lock = None
+    server = None
     try:
+        startup_log.info("EXE起動・dataディレクトリ作成完了")
+        instance_lock = single_instance(data_dir)
+        startup_log.info("単一起動ロック取得完了")
+
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+        startup_log.info("Django初期化開始")
+        import django
+        django.setup()
+        startup_log.info("Django初期化完了")
+
+        # Migrate BEFORE importing waitress or pywebview. A DB file should
+        # exist even when the GUI stack fails to load.
+        from django.core.management import call_command
+        startup_log.info("SQLiteマイグレーション開始")
+        call_command("migrate", interactive=False, verbosity=0)
+        startup_log.info("SQLiteマイグレーション完了")
+
+        startup_log.info("Waitress・pywebview読込開始")
+        from django.core.wsgi import get_wsgi_application
+        from waitress import create_server
+        import webview
+        startup_log.info("Waitress・pywebview読込完了")
+
+        port = free_port()
+        server = create_server(
+            get_wsgi_application(), host="127.0.0.1", port=port, threads=4
+        )
+        threading.Thread(target=server.run, name="django-waitress", daemon=True).start()
+        startup_log.info("ローカルサーバー起動・ヘルスチェック待機開始")
+        url = f"http://127.0.0.1:{port}/"
+        for _ in range(100):
+            try:
+                with urllib.request.urlopen(url + "api/health", timeout=0.2) as r:
+                    if r.status == 200:
+                        break
+            except (OSError, TimeoutError):
+                time.sleep(0.05)
+        else:
+            raise RuntimeError("ローカルサーバーを起動できませんでした")
+
+        startup_log.info("GUIウィンドウ起動開始")
         show_desktop(webview, url, Path(os.environ["SPARES_RESOURCE_DIR"]))
+        startup_log.info("GUIウィンドウ正常終了")
+    except BaseException:
+        startup_log.exception("起動処理またはアプリ実行中に例外が発生")
+        raise
     finally:
-        server.close()
+        if server is not None:
+            server.close()
         if instance_lock is not None:
             instance_lock.close()
-
+        startup_log.removeHandler(handler)
+        handler.close()
 
 if __name__ == "__main__":
     main()
