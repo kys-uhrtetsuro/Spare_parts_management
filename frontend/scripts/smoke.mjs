@@ -159,9 +159,9 @@ try {
   await importDialog.getByRole('button', { name: '取り込みを確定' }).click()
   await importDialog.waitFor({ state: 'hidden' })
   await page.getByLabel('対象システム').selectOption({ label: 'テストシステムA（複製）' })
-  const importedRow = page.getByRole('row').filter({
-    has: page.getByRole('cell', { name: 'テストシステムA（複製）', exact: true }),
-  })
+  const importedRow = page.getByRole('row')
+    .filter({ has: page.getByRole('cell', { name: 'テストシステムA（複製）', exact: true }) })
+    .filter({ has: page.getByRole('cell', { name: 'P200', exact: true }) })
   await importedRow.waitFor()
   assert.equal(await importedRow.getByRole('cell', { name: '2', exact: true }).count(), 1)
 
