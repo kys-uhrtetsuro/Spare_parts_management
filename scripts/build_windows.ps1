@@ -28,6 +28,7 @@ $argsList = @(
     "--include-data-dir=frontend/dist=frontend/dist",
     "launcher.py"
 )
+$env:PYTHONPATH = (Resolve-Path "backend").Path
 python @argsList
 if ($LASTEXITCODE -ne 0) { throw "Nuitka build failed" }
 Write-Host "Nuitka compilation completed. Keep the data directory when upgrading."
