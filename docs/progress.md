@@ -116,12 +116,22 @@
 - [未確認] ユーザーWindows PCでのWebView2起動・タスクバーアイコンの実機確認
 
 ## Nuitkaコンパイルキャッシュ（次回ビルド用）
-- [実装済み・マージ待ち] `feature/nuitka-cache` で `NUITKA_CACHE_DIR` を固定し、GitHub Actionsのrestore/saveでCコンパイル結果（ccache/clcache）を継続利用
-- [実装済み・マージ待ち] キャッシュキーはWindows/x64・Python 3.12・`requirements.txt` のハッシュで分離。各実行は固有キーで保存し、次回は互換キーから復元
-- [実装済み・マージ待ち] ビルド成功直後にキャッシュを保存し、配布ZIP登録の成否とは分離
-- [実装済み・マージ待ち] workflow本体と進捗文書のみの更新はWindowsビルドを再起動しない。手動実行は維持
-- [注意] ReleaseのNuitkaコンパイルが実行中のため、終了するまではブランチをReleaseへ統合しない（統合すると実行中の成果物登録がスキップされる）
+- [マージ済み] `feature/nuitka-cache` で `NUITKA_CACHE_DIR` を固定し、GitHub Actionsのrestore/saveでCコンパイル結果（ccache/clcache）を継続利用
+- [マージ済み] キャッシュキーはWindows/x64・Python 3.12・`requirements.txt` のハッシュで分離。各実行は固有キーで保存し、次回は互換キーから復元
+- [マージ済み] ビルド成功直後にキャッシュを保存し、配布ZIP登録の成否とは分離
+- [マージ済み] workflow本体と進捗文書のみの更新はWindowsビルドを再起動しない。手動実行は維持
+- [マージ済み] キャッシュ対応PR #2をReleaseへ統合。最新版ソースの配布ビルドはPR #3統合後に実行される
 - [検証待ち] Release統合後のビルド初回でキャッシュ保存、2回目以降でキャッシュ復元とヒット率を確認。高速化の程度はC生成コードの差分次第
+
+## 1部品への複数機器・部位割当
+- [実装] 中間モデル SystemPartPlacement の一意制約を「システム×部品×機器×部位」に変更
+- [実装] 同じ機器の部位違い、別機器、部位なしを複数行で登録・編集可能。完全重複は拒否
+- [実装] APIで `placements` 配列を検証し、旧形式の単一equipment_id/section_id指定も後方互換で受理
+- [実装] 部品の後継登録では全機器割当を引継ぎ、通常編集は選択中システムだけ更新
+- [実装] 部品マスタの一覧・逆引き・フィルター、および複数行を持つ編集モーダルを対応
+- [実装] Excel出力は複数の割当レコードを非表示シートに保持。V3で書き出し、V2/V3の取り込みをサポート
+- [検証済み] Djangoマイグレーション／回帰テスト・TypeScriptビルド・Playwright E2E成功（CI #38687272448 / #38687293404）
+- [マージ中] PR #3をReleaseへ統合。ReleaseソースCIとWindows配布ビルドは統合後に再確認
 
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功

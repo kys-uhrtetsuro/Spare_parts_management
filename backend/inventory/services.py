@@ -269,51 +269,76 @@ def optional_fk(model, value, label):
 
 
 def part_assignments(data, original=None):
-    """Part category is global; machine/section assignments are system-scoped."""
+    """Validate optional assignments to multiple equipment/sections in one system.
+
+    Backwards-compatible with existing clients that provide equipment_id and
+    section_id instead of the placements list.
+    """
     category_id = optional_fk(
-        PartCategory,
-        data.get("category_id", original.category_id if original else None), "分類"
+        PartCategory, data.get("category_id", original.category_id if original else None),
+        "分類",
     )
     system_id = optional_fk(SystemMaster, data.get("system_id"), "システム")
-    equipment_id = optional_fk(EquipmentMaster, data.get("equipment_id"), "機器")
-    section_id = optional_fk(EquipmentSection, data.get("section_id"), "部位")
-    if equipment_id is not None and (
-        system_id is None or not EquipmentMaster.objects.filter(
-            pk=equipment_id, system_id=system_id
-        ).exists()
-    ):
-        raise InputError("機器は選択したシステムに属している必要があります")
-    if section_id is not None and (
-        equipment_id is None or not EquipmentSection.objects.filter(
-            pk=section_id, equipment_id=equipment_id
-        ).exists()
-    ):
-        raise InputError("部位と機器の組み合わせが一致していません")
-    return category_id, system_id, equipment_id, section_id
+    if "placements" in data:
+        entries = data["placements"]
+        if not isinstance(entries, list):
+            raise InputError("機器・部位の割当一覧が不正です")
+    else:
+        equipment_id = data.get("equipment_id")
+        section_id = data.get("section_id")
+        entries = ([{"equipment_id": equipment_id, "section_id": section_id}]
+                   if equipment_id not in (None, "") or section_id not in (None, "") else [])
+
+    if len(entries) > 1000:
+        raise InputError("機器・部位の割当件数が多すぎます")
+    parsed = []
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise InputError("機器・部位の割当が不正です")
+        eid = optional_fk(EquipmentMaster, entry.get("equipment_id"), "機器")
+        sid = optional_fk(EquipmentSection, entry.get("section_id"), "部位")
+        if eid is None:
+            raise InputError("機器・部位の割当には機器を選択してください")
+        if system_id is None or not EquipmentMaster.objects.filter(
+            pk=eid, system_id=system_id,
+        ).exists():
+            raise InputError("機器は選択したシステムに属している必要があります")
+        if sid is not None and not EquipmentSection.objects.filter(
+            pk=sid, equipment_id=eid,
+        ).exists():
+            raise InputError("部位と機器の組み合わせが一致していません")
+        key = (eid, sid)
+        if key in seen:
+            raise InputError("同じ機器・部位の組み合わせを重複登録できません")
+        seen.add(key)
+        parsed.append(key)
+    return category_id, system_id, parsed
 
 
-def save_placement(part, system_id, equipment_id, section_id):
+def save_placements(part, system_id, assignments):
+    """Replace assignments for one system; keep those from other systems."""
     if system_id is None:
         return
-    if equipment_id is None:
-        SystemPartPlacement.objects.filter(part=part, system_id=system_id).delete()
-    else:
-        SystemPartPlacement.objects.update_or_create(
+    SystemPartPlacement.objects.filter(part=part, system_id=system_id).delete()
+    SystemPartPlacement.objects.bulk_create([
+        SystemPartPlacement(
             part=part, system_id=system_id,
-            defaults={"equipment_id": equipment_id, "section_id": section_id},
-        )
+            equipment_id=equipment_id, section_id=section_id,
+        ) for equipment_id, section_id in assignments
+    ])
 
 
 def create_part(data):
     number = text_field(data.get("part_number"), "品番", 160)
     model = text_field(data.get("model_number"), "型式", 160)
     name = text_field(data.get("name"), "品名", 250)
-    category_id, system_id, equipment_id, section_id = part_assignments(data)
+    category_id, system_id, assignments = part_assignments(data)
     with WRITE_LOCK, transaction.atomic():
         result = PartMaster.objects.create(
             part_number=number, model_number=model, name=name, category_id=category_id
         )
-        save_placement(result, system_id, equipment_id, section_id)
+        save_placements(result, system_id, assignments)
     return result
 
 
@@ -321,7 +346,7 @@ def change_part(part, data):
     new_number = text_field(data.get("part_number"), "品番", 160)
     new_model = text_field(data.get("model_number"), "型式", 160)
     new_name = text_field(data.get("name"), "品名", 250)
-    category_id, system_id, equipment_id, section_id = part_assignments(data, part)
+    category_id, system_id, assignments = part_assignments(data, part)
     with WRITE_LOCK, transaction.atomic():
         if PartMaster.objects.filter(previous_part_id=part.pk).exists():
             raise InputError("後継登録済みの旧品番・旧型式は編集できません")
@@ -330,7 +355,7 @@ def change_part(part, data):
             part.category_id = category_id
             part.save()
             if system_id is not None:
-                save_placement(part, system_id, equipment_id, section_id)
+                save_placements(part, system_id, assignments)
             return part
 
         successor = PartMaster.objects.create(
@@ -344,15 +369,15 @@ def change_part(part, data):
             ) for p in SystemPartPlacement.objects.filter(part=part)
         ])
         if system_id is not None:
-            save_placement(successor, system_id, equipment_id, section_id)
+            save_placements(successor, system_id, assignments)
         PartVersion.objects.create(
             part=part, old_part_number=part.part_number, old_model_number=part.model_number,
             new_part_number=successor.part_number, new_model_number=successor.model_number,
         )
-        for system_id in StockAlertSetting.objects.filter(part=part).values_list(
+        for alert_system_id in StockAlertSetting.objects.filter(part=part).values_list(
             "system_id", flat=True
         ).distinct():
-            reconcile_alert_lineage(system_id)
+            reconcile_alert_lineage(alert_system_id)
         return successor
 
 

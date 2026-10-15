@@ -17,17 +17,26 @@ type ImportPreview = {
   conflicts: string[]; already_imported: boolean
 }
 type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
-type PartForm = { part_number: string; model_number: string; name: string; system_id: string; equipment_id: string; section_id: string; category_id: string }
+type AssignmentForm = { equipment_id: string; section_id: string }
+type PartForm = { part_number: string; model_number: string; name: string; system_id: string; placements: AssignmentForm[]; category_id: string }
 type Editor = { mode: 'create' | 'edit'; partId?: number; copyFrom?: number; values: PartForm }
 type MovementForm = { direction: 'IN' | 'OUT'; quantity: string; operator: string; note: string }
-const emptyPart: PartForm = { part_number: '', model_number: '', name: '', system_id: '', equipment_id: '', section_id: '', category_id: '' }
+const blankAssignment = (): AssignmentForm => ({ equipment_id: '', section_id: '' })
+const emptyPart: PartForm = {
+  part_number: '', model_number: '', name: '', system_id: '',
+  placements: [blankAssignment()], category_id: '',
+}
 function valuesFromPart(p: Part, systemId: string): PartForm {
-  const placement = p.placements.find(x => String(x.system_id) === systemId) ?? p.placements[0]
+  const resolvedSystem = systemId || String(p.placements[0]?.system_id ?? '')
+  const assigned = p.placements.filter(x => String(x.system_id) === resolvedSystem)
   return {
     part_number: p.part_number, model_number: p.model_number, name: p.name,
-    system_id: systemId || String(placement?.system_id ?? ''),
-    equipment_id: String(placement?.equipment_id ?? ''),
-    section_id: String(placement?.section_id ?? ''),
+    system_id: resolvedSystem,
+    placements: assigned.length
+      ? assigned.map(x => ({
+          equipment_id: String(x.equipment_id), section_id: String(x.section_id ?? ''),
+        }))
+      : [blankAssignment()],
     category_id: String(p.category_id ?? ''),
   }
 }
@@ -264,7 +273,12 @@ export default function App() {
   const submitPart = async () => {
     if (!editor) return
     const url = editor.mode === 'edit' ? 'parts/' + editor.partId : 'parts'
-    const success = await act(() => api<{ item: Part }>(url, editor.mode === 'edit' ? 'PUT' : 'POST', editor.values).then(r => {
+    const form = editor.values
+    const values = {
+      ...form,
+      placements: form.placements.filter(x => x.equipment_id || x.section_id),
+    }
+    const success = await act(() => api<{ item: Part }>(url, editor.mode === 'edit' ? 'PUT' : 'POST', values).then(r => {
       if (editor.mode === 'create' && movementModal) { setPickedPart(r.item); setPartSearch(label(r.item)) }
     }), editor.mode === 'edit' ? '部品を更新しました' : '部品を登録しました')
     if (success) setEditor(null)
@@ -492,7 +506,7 @@ export default function App() {
           <tbody>{filteredParts.map(p => <tr key={p.id}>
             <td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td>
             <td>{p.placements.filter(a => !selected || String(a.system_id) === selected).map(a =>
-              <div key={a.system_id}>{equipments.find(e => e.id === a.equipment_id)?.name ?? '—'}
+              <div key={a.system_id + '-' + a.equipment_id + '-' + (a.section_id ?? 'none')}>{equipments.find(e => e.id === a.equipment_id)?.name ?? '—'}
                 {a.section_id && <small> / {sections.find(x => x.id === a.section_id)?.name}</small>}
                 {!selected && <small>（{systems.find(sys => sys.id === a.system_id)?.name}）</small>}</div>
             )}</td>
@@ -665,23 +679,66 @@ export default function App() {
       ] as const).map(([key, title]) => <label className="field" key={key}>{title}<input value={editor.values[key]} onChange={e => setEditor(p => p && ({ ...p, values: { ...p.values, [key]: e.target.value } }))} /></label>)}
         <label className="field">割当先システム（任意）
           <select aria-label="割当先システム（任意）" value={editor.values.system_id}
-            onChange={e => setEditor(p => p && ({
-              ...p, values: { ...p.values, system_id: e.target.value, equipment_id: '', section_id: '' }
-            }))}>
+            onChange={e => setEditor(prev => {
+              if (!prev) return prev
+              const systemId = e.target.value
+              const origin = parts.find(part => part.id === prev.partId || part.id === prev.copyFrom)
+              const assigned = origin?.placements.filter(x => String(x.system_id) === systemId) ?? []
+              return { ...prev, values: {
+                ...prev.values, system_id: systemId,
+                placements: assigned.length ? assigned.map(x => ({
+                  equipment_id: String(x.equipment_id), section_id: String(x.section_id ?? ''),
+                })) : [blankAssignment()],
+              }}
+            })}>
             <option value="">機器を割り当てない</option>
             {systems.map(sys => <option key={sys.id} value={sys.id}>{sys.name}</option>)}
           </select>
         </label>
-        <label className="field">機器（任意）
-          <select value={editor.values.equipment_id} disabled={!editor.values.system_id} onChange={e => setEditor(p => p && ({
-            ...p, values: { ...p.values, equipment_id: e.target.value, section_id: '' }
-          }))}><option value="">未指定</option>{equipments.filter(eq => String(eq.system_id) === editor.values.system_id).map(eq => <option key={eq.id} value={eq.id}>{eq.name}{eq.alias ? '（' + eq.alias + '）' : ''}</option>)}</select>
-        </label>
-        <label className="field">部位（任意）
-          <select value={editor.values.section_id} disabled={!editor.values.equipment_id} onChange={e => setEditor(p => p && ({
-            ...p, values: { ...p.values, section_id: e.target.value }
-          }))}><option value="">未指定</option>{sections.filter(sec => String(sec.equipment_id) === editor.values.equipment_id).map(sec => <option key={sec.id} value={sec.id}>{sec.name}</option>)}</select>
-        </label>
+        {editor.values.system_id && <div className="field wide">
+          <div className="row between">
+            <strong>対象機器・部位（複数登録可能）</strong>
+            <button type="button" className="button tiny secondary" onClick={() => setEditor(p =>
+              p && ({ ...p, values: { ...p.values, placements: [...p.values.placements, blankAssignment()] } })
+            )}>＋ 機器・部位を追加</button>
+          </div>
+          <p className="help">同じ機器でも部位が違えば別行として登録できます。ほかのシステムの割当は変更されません。</p>
+          {editor.values.placements.map((assignment, index) =>
+            <div className="placement-edit-row" key={index}>
+              <label className="field">機器（任意）{index > 0 ? ' #' + (index + 1) : ''}
+                <select value={assignment.equipment_id} onChange={e => setEditor(p => {
+                  if (!p) return p
+                  const placements = p.values.placements.map((entry, i) => i === index
+                    ? { equipment_id: e.target.value, section_id: '' } : entry)
+                  return { ...p, values: { ...p.values, placements } }
+                })}>
+                  <option value="">未指定</option>
+                  {equipments.filter(eq => String(eq.system_id) === editor.values.system_id).map(eq =>
+                    <option key={eq.id} value={eq.id}>{eq.name}{eq.alias ? '（' + eq.alias + '）' : ''}</option>
+                  )}
+                </select>
+              </label>
+              <label className="field">部位（任意）{index > 0 ? ' #' + (index + 1) : ''}
+                <select value={assignment.section_id} disabled={!assignment.equipment_id}
+                  onChange={e => setEditor(p => {
+                    if (!p) return p
+                    const placements = p.values.placements.map((entry, i) => i === index
+                      ? { ...entry, section_id: e.target.value } : entry)
+                    return { ...p, values: { ...p.values, placements } }
+                  })}>
+                  <option value="">未指定</option>
+                  {sections.filter(sec => String(sec.equipment_id) === assignment.equipment_id).map(sec =>
+                    <option key={sec.id} value={sec.id}>{sec.name}</option>
+                  )}
+                </select>
+              </label>
+              <button type="button" className="button tiny secondary" aria-label={'割当行' + (index + 1) + 'を削除'}
+                onClick={() => setEditor(p => p && ({ ...p, values: {
+                  ...p.values, placements: p.values.placements.filter((_, i) => i !== index),
+                } }))}>削除</button>
+            </div>
+          )}
+        </div>}
         <label className="field">部品分類（任意）
           <select value={editor.values.category_id} onChange={e => setEditor(p => p && ({
             ...p, values: { ...p.values, category_id: e.target.value }
