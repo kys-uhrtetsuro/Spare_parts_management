@@ -13,10 +13,10 @@ from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
-from .models import PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
 from .services import (
     InputError, balance, change_part, correct_movement, create_movement,
-    find_part, find_system, inventory_rows, positive_int, replace_alerts, text_field,
+    find_part, find_system, inventory_rows, part_assignments, positive_int, replace_alerts, text_field,
 )
 
 
@@ -49,6 +49,8 @@ def serialize_part(part):
     return {
         "id": part.id, "part_number": part.part_number,
         "model_number": part.model_number, "name": part.name,
+        "previous_part_id": part.previous_part_id, "equipment_id": part.equipment_id,
+        "section_id": part.section_id, "category_id": part.category_id,
     }
 
 
@@ -90,6 +92,84 @@ def system_detail(request, pk):
 
 
 @endpoint(["GET", "POST"])
+def equipment(request):
+    if request.method == "GET":
+        return JsonResponse({"items": list(EquipmentMaster.objects.values("id", "name", "alias"))})
+    data = body(request)
+    item = EquipmentMaster.objects.create(
+        name=text_field(data.get("name"), "機器名", 160),
+        alias=text_field(data.get("alias", ""), "機器通称", 160, required=False),
+    )
+    return JsonResponse({"item": {"id": item.pk, "name": item.name, "alias": item.alias}}, status=201)
+
+
+@endpoint(["PUT"])
+def equipment_detail(request, pk):
+    try:
+        item = EquipmentMaster.objects.get(pk=pk)
+    except EquipmentMaster.DoesNotExist:
+        raise InputError("機器が存在しません") from None
+    data = body(request)
+    item.name = text_field(data.get("name"), "機器名", 160)
+    item.alias = text_field(data.get("alias", ""), "機器通称", 160, required=False)
+    item.save(update_fields=["name", "alias"])
+    return JsonResponse({"item": {"id": item.pk, "name": item.name, "alias": item.alias}})
+
+
+@endpoint(["GET", "POST"])
+def equipment_sections(request):
+    if request.method == "GET":
+        return JsonResponse({"items": list(
+            EquipmentSection.objects.values("id", "equipment_id", "name")
+        )})
+    data = body(request)
+    equipment_id = positive_int(data.get("equipment_id"), "機器ID")
+    if not EquipmentMaster.objects.filter(pk=equipment_id).exists():
+        raise InputError("機器が存在しません")
+    item = EquipmentSection.objects.create(
+        equipment_id=equipment_id,
+        name=text_field(data.get("name"), "部位名", 160),
+    )
+    return JsonResponse({"item": {
+        "id": item.pk, "equipment_id": item.equipment_id, "name": item.name
+    }}, status=201)
+
+
+@endpoint(["PUT"])
+def equipment_section_detail(request, pk):
+    try:
+        item = EquipmentSection.objects.get(pk=pk)
+    except EquipmentSection.DoesNotExist:
+        raise InputError("部位が存在しません") from None
+    data = body(request)
+    item.name = text_field(data.get("name"), "部位名", 160)
+    item.save(update_fields=["name"])
+    return JsonResponse({"item": {
+        "id": item.pk, "equipment_id": item.equipment_id, "name": item.name
+    }})
+
+
+@endpoint(["GET", "POST"])
+def categories(request):
+    if request.method == "GET":
+        return JsonResponse({"items": list(PartCategory.objects.values("id", "name"))})
+    data = body(request)
+    item = PartCategory.objects.create(name=text_field(data.get("name"), "分類名", 160))
+    return JsonResponse({"item": {"id": item.pk, "name": item.name}}, status=201)
+
+
+@endpoint(["PUT"])
+def category_detail(request, pk):
+    try:
+        item = PartCategory.objects.get(pk=pk)
+    except PartCategory.DoesNotExist:
+        raise InputError("分類が存在しません") from None
+    item.name = text_field(body(request).get("name"), "分類名", 160)
+    item.save(update_fields=["name"])
+    return JsonResponse({"item": {"id": item.pk, "name": item.name}})
+
+
+@endpoint(["GET", "POST"])
 def parts(request):
     if request.method == "POST":
         data = body(request)
@@ -97,10 +177,19 @@ def parts(request):
             part_number=text_field(data.get("part_number"), "品番", 160),
             model_number=text_field(data.get("model_number"), "型式", 160),
             name=text_field(data.get("name"), "品名", 250),
+            **part_assignments(data),
         )
         return JsonResponse({"item": serialize_part(p)}, status=201)
     query = request.GET.get("q", "").strip()
     qs = PartMaster.objects.all()
+    filter_ids = {
+        "equipment_id": request.GET.get("equipment"),
+        "section_id": request.GET.get("section"),
+        "category_id": request.GET.get("category"),
+    }
+    for field, value in filter_ids.items():
+        if value not in (None, ""):
+            qs = qs.filter(**{field: positive_int(value, field)})
     if query:
         from django.db.models import Q
         old_ids = PartVersion.objects.filter(
@@ -110,7 +199,7 @@ def parts(request):
             Q(part_number__icontains=query) | Q(model_number__icontains=query)
             | Q(name__icontains=query) | Q(pk__in=old_ids)
         )
-    return JsonResponse({"items": [serialize_part(p) for p in qs.order_by("part_number", "model_number")[:500]]})
+    return JsonResponse({"items": [serialize_part(p) for p in qs.order_by("part_number", "model_number")]})
 
 
 @endpoint(["PUT"])
@@ -123,6 +212,18 @@ def part_detail(request, pk):
 @endpoint(["GET"])
 def part_versions(request, pk):
     part = find_part(pk)
+    # Also return earlier identifier changes for the selected successor.
+    lineage = [part.pk]
+    ancestor = part.previous_part_id
+    while ancestor is not None and ancestor not in lineage:
+        lineage.append(ancestor)
+        ancestor = PartMaster.objects.filter(pk=ancestor).values_list(
+            "previous_part_id", flat=True
+        ).first()
+    qs = PartVersion.objects.filter(part_id__in=lineage).values(
+        "id", "old_part_number", "old_model_number", "new_part_number",
+        "new_model_number", "changed_at"
+    ).order_by("-changed_at", "-id")
     return JsonResponse({"items": list(qs)})
 
 
@@ -131,11 +232,28 @@ def system_param(request):
     return None if raw in (None, "") else find_system(raw).id
 
 
+def filter_inventory_rows(request, rows):
+    """Allow reverse lookup by equipment, section and category across stock views."""
+    filters = {}
+    for field, param in (
+        ("equipment_id", "equipment"), ("section_id", "section"),
+        ("category_id", "category"),
+    ):
+        raw = request.GET.get(param)
+        if raw not in (None, ""):
+            filters[field] = positive_int(raw, param)
+    if not filters:
+        return rows
+    ids = set(PartMaster.objects.filter(**filters).values_list("pk", flat=True))
+    return [row for row in rows if row["part_id"] in ids]
+
+
 @endpoint(["GET"])
 def stocks(request):
     system_id = system_param(request)
     all_items = request.GET.get("all") == "1"
-    return JsonResponse({"items": inventory_rows(system_id, show_all=all_items)})
+    rows = filter_inventory_rows(request, inventory_rows(system_id, show_all=all_items))
+    return JsonResponse({"items": rows})
 
 
 @endpoint(["GET", "POST"])
@@ -185,7 +303,7 @@ def export_excel(request):
     import pandas as pd
 
     system_id = system_param(request)
-    rows = inventory_rows(system_id)
+    rows = filter_inventory_rows(request, inventory_rows(system_id))
     def excel_text(value):
         # Prevent untrusted master values from being interpreted as Excel formulas.
         return "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@")) else value
