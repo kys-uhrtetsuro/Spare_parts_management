@@ -38,6 +38,8 @@ def main():
         db = target / "data" / "inventory.sqlite3"
         assert not db.exists(), "First startup should create SQLite"
         run_executable(exe)
+        if (target / "data" / ".django-secret").exists():
+            raise AssertionError("Onefile unexpectedly created an external secret file")
         if not db.is_file() or db.stat().st_size == 0:
             raise AssertionError("Onefile failed to initialize external SQLite")
         with sqlite3.connect(db) as connection:

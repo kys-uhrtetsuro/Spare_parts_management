@@ -115,6 +115,8 @@ SQLite DBをネットワーク共有ドライブに置かないこと。
 重複させて安易に複数回取り込まないこと。マスタの品番・型式等が既存DBと矛盾する
 場合は、トランザクション全体を取り消す。
 
+旧standalone版で作られた `.django-secret` はOnefile版初回起動時にSQLite内へ移行し、移行成功後に削除する。新規環境では秘密鍵ファイルは作成しない。
+
 DB全体をそのまま復元したい場合は、アプリを終了して`data/inventory.sqlite3`を
 ファイルコピーで置き換える。これはExcel移植と異なり、履歴も丸ごと引き継ぐ。
 
@@ -196,7 +198,7 @@ Excel移植形式V3は複数割当行を格納し、V2形式の取り込みに�
   SparePartsManagement.exe
   data/
     inventory.sqlite3    ← 初回起動で自動作成
-    .django-secret       ← 初回起動で自動生成する秘密鍵
+    （秘密鍵もSQLite内部に保存）
     backups/             ← バックアップ実行時のみ作成
 ```
 

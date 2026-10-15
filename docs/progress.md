@@ -161,3 +161,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [実装] 配布ZIPはOnefile EXEの1ファイルのみ。旧standalone ZIPは新版配布確定時に削除
 - [実装] exeアイコンリソース検査もOnefile側へ切替
 - [確認待ち] 最新Windows CIのOnefile EXEコンパイルと実機起動
+
+- [実装] Django秘密鍵をSQLite `spareparts_configuration` テーブルへ永続保存し、別途必須ファイルを廃止
+- [実装] 旧 `.django-secret` がある環境では同じ秘密鍵をSQLiteへ移行して互換性を保持
