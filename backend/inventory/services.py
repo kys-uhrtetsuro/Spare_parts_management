@@ -130,8 +130,8 @@ def create_movement(data):
     with WRITE_LOCK, transaction.atomic():
         # Do not allow registering new movements under a superseded identifier.
         # Existing ledger corrections remain available for audit.
-        if PartMaster.objects.filter(previous_part_id=part.id).exists():
-            raise InputError("後継品がある旧品番・旧型式には新規入出庫できません。後継品を選択してください")
+        if direction == StockHistory.IN and PartMaster.objects.filter(previous_part_id=part.id).exists():
+            raise InputError("後継品のある旧品番・旧型式には補充できません。現行品を選択してください")
         if direction == StockHistory.OUT and balance(system.id, part.id) < quantity:
             raise InputError("在庫が不足しています。マイナス在庫になる登録はできません")
         obj = StockHistory.objects.create(

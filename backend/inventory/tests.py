@@ -356,49 +356,72 @@ class InventoryTests(TestCase):
         systems = [v["id"] for v in self.client.get("/api/systems").json()["items"]]
         self.assertEqual(systems, sorted(systems))
 
-    def test_superseded_parts_are_read_only_and_not_selectable_for_movements(self):
-        self.movement("IN", 4)
+    def test_superseded_part_can_be_issued_not_replenished_or_edited(self):
+        original = self.movement("IN", 4)
         successor = change_part(self.part, {
             "part_number": "P200", "model_number": "V2", "name": "現行センサ",
         })
-        # Masters remain accessible for auditing even if hidden by default.
         self.assertEqual(PartMaster.objects.count(), 2)
-        active_ids = [row["id"] for row in self.client.get(
+        current_ids = [row["id"] for row in self.client.get(
             "/api/parts?current_only=1"
         ).json()["items"]]
-        self.assertEqual(active_ids, [successor.pk])
+        self.assertEqual(current_ids, [successor.pk])
         self.assertEqual(len(self.client.get("/api/parts").json()["items"]), 2)
-        old_result = self.client.post(
+        rejected = self.client.post(
             "/api/history", content_type="application/json",
             data=json.dumps({
                 "system_id": self.system.pk, "part_id": self.part.pk,
                 "direction": "IN", "quantity": 1, "operator": "担当者",
             }),
         )
-        self.assertEqual(old_result.status_code, 400)
-        self.assertIn("後継品", old_result.json()["error"])
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn("補充できません", rejected.json()["error"])
+        issued = self.movement("OUT", 2)
+        self.assertEqual(issued.part_id, self.part.pk)
+        old_row = next(row for row in inventory_rows() if row["part_number"] == "P100")
+        self.assertEqual(old_row["quantity"], 2)
         with self.assertRaises(InputError):
-            self.movement("OUT", 1)
+            self.movement("OUT", 3)
         with self.assertRaises(InputError):
             change_part(self.part, {
                 "part_number": "P100", "model_number": "V1", "name": "誤編集",
             })
         self.part.refresh_from_db()
         self.assertEqual(self.part.name, "センサ")
-        self.movement("IN", 2, part=successor)
-        self.assertEqual(StockHistory.objects.count(), 2)
+        self.movement("IN", 3, part=successor)
         self.assertEqual(
             {r["part_number"]: r["quantity"] for r in inventory_rows()},
-            {"P100": 4, "P200": 2},
+            {"P100": 2, "P200": 3},
         )
-        # Legacy history corrections remain permitted and cannot become negative.
-        original = StockHistory.objects.get(part=self.part)
         correct_movement(original.id, {
             "direction": "IN", "quantity": 3, "operator": "担当者",
             "note": "旧レコード数量訂正",
         })
-        old_stock = next(row for row in inventory_rows() if row["part_number"] == "P100")
-        self.assertEqual(old_stock["quantity"], 3)
+        old_row = next(row for row in inventory_rows() if row["part_number"] == "P100")
+        self.assertEqual(old_row["quantity"], 1)
+        self.assertEqual(StockHistory.objects.filter(part=self.part).count(), 4)
+
+    def test_superseded_part_issue_via_api_succeeds_until_stock_zero(self):
+        self.movement("IN", 2)
+        change_part(self.part, {
+            "part_number": "P100", "model_number": "V2", "name": "現行センサ",
+        })
+        data = {"system_id": self.system.pk, "part_id": self.part.pk,
+                "operator": "担当者", "direction": "OUT"}
+        ok = self.client.post("/api/history", content_type="application/json",
+                              data=json.dumps({**data, "quantity": 2}))
+        self.assertEqual(ok.status_code, 201, ok.content)
+        self.assertFalse(any(
+            row["part_id"] == self.part.pk
+            for row in inventory_rows(self.system.pk)
+        ))
+        too_many = self.client.post("/api/history", content_type="application/json",
+                                    data=json.dumps({**data, "quantity": 1}))
+        self.assertEqual(too_many.status_code, 400)
+        self.assertIn("在庫が不足", too_many.json()["error"])
+        in_old = self.client.post("/api/history", content_type="application/json",
+                                  data=json.dumps({**data, "direction": "IN", "quantity": 1}))
+        self.assertEqual(in_old.status_code, 400)
 
     def test_machine_copy_duplicates_sections_but_not_placement_or_stock(self):
         origin = EquipmentMaster.objects.create(system=self.system, name="搬送機", alias="CV")

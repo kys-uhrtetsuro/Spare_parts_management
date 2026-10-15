@@ -209,7 +209,13 @@ export default function App() {
   }
 
   const currentParts = parts.filter(x => !x.has_successor)
-  const pickerParts = currentParts.filter(p =>
+  const stockedPartIds = new Set(stocks.filter(row =>
+    String(row.system_id) === selected && row.quantity > 0
+  ).map(row => row.part_id))
+  const selectableParts = movement.direction === 'IN'
+    ? currentParts
+    : parts.filter(part => stockedPartIds.has(part.id))
+  const pickerParts = selectableParts.filter(p =>
     label(p).toLocaleLowerCase().includes(pickerQuery.trim().toLocaleLowerCase()) &&
     (!pickerCategory || String(p.category_id) === pickerCategory) &&
     (!pickerEquipment && !pickerSection || p.placements.some(a =>
@@ -217,19 +223,23 @@ export default function App() {
       (!pickerEquipment || String(a.equipment_id) === pickerEquipment) &&
       (!pickerSection || String(a.section_id) === pickerSection)))
   )
-  const candidates = partSearch.trim() ? currentParts.filter(x =>
+  const candidates = partSearch.trim() ? selectableParts.filter(x =>
     [x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(partSearch.trim().toLowerCase()))
   ).slice(0, 4) : []
   // Exactly matching unique part identifiers can be entered directly.
   // Ambiguous numbers must be selected from the candidates or the list.
-  const exactMatches = currentParts.filter(p => {
+  const exactMatches = selectableParts.filter(p => {
     const input = partSearch.trim().toLocaleLowerCase()
     return Boolean(input) && (
       p.part_number.toLocaleLowerCase() === input ||
       `${p.part_number} / ${p.model_number}`.toLocaleLowerCase() === input
     )
   })
-  const chosenPart = pickedPart ?? (exactMatches.length === 1 ? exactMatches[0] : null)
+  const chosenPart = (pickedPart && selectableParts.some(p => p.id === pickedPart.id)
+    ? pickedPart : null) ?? (exactMatches.length === 1 ? exactMatches[0] : null)
+  const chosenStock = chosenPart
+    ? stocks.find(row => String(row.system_id) === selected && row.part_id === chosenPart.id)
+    : undefined
   const choosePart = (part: Part) => {
     setPickedPart(part)
     setPartSearch(label(part))
@@ -237,7 +247,9 @@ export default function App() {
   }
   const criticalCount = stocks.filter(x => x.alert).length
   const submitMovement = async () => {
-    if (!selected || !chosenPart || chosenPart.has_successor) { setError('現行品とシステムを選択してください'); return }
+    if (!selected || !chosenPart || (
+      movement.direction === 'IN' ? chosenPart.has_successor : !chosenStock || chosenStock.quantity <= 0
+    )) { setError(movement.direction === 'IN' ? '現行品とシステムを選択してください' : '在庫のある部品とシステムを選択してください'); return }
     const success = await act(() => api('history', 'POST', {
       system_id: Number(selected), part_id: chosenPart.id,
       direction: movement.direction, quantity: Number(movement.quantity),
@@ -340,8 +352,9 @@ export default function App() {
       setImportError(err instanceof Error ? err.message : String(err))
     } finally { setBusy(false) }
   }
-  const openMovement = () => {
-    setPickedPart(null); setPartSearch(''); setPartPicker(false); setMovement({ direction: 'IN', quantity: '1', operator: lastOperator, note: '' })
+  const openMovement = (direction: 'IN' | 'OUT') => {
+    setPickedPart(null); setPartSearch(''); setPartPicker(false)
+    setMovement({ direction, quantity: '1', operator: lastOperator, note: '' })
     setMovementModal(true)
   }
   const openCorrection = (h: History) => {
@@ -435,9 +448,13 @@ export default function App() {
               ...(sectionFilter ? { section: sectionFilter } : {}),
               ...(categoryFilter ? { category: categoryFilter } : {}),
             }).toString()}>Excel出力</a>
-            <button className="button primary" onClick={openMovement} disabled={!selected}>＋ 入出庫を登録</button>
+            <button className="button primary" onClick={() => openMovement('IN')} disabled={!selected}>＋ 入庫登録</button>
+            <button className="button secondary" onClick={() => openMovement('OUT')} disabled={!selected}>－ 出庫登録</button>
           </>}
-          {tab === 'history' && <button className="button primary" disabled={!selected} onClick={openMovement}>＋ 入出庫を登録</button>}
+          {tab === 'history' && <>
+            <button className="button primary" disabled={!selected} onClick={() => openMovement('IN')}>＋ 入庫登録</button>
+            <button className="button secondary" disabled={!selected} onClick={() => openMovement('OUT')}>－ 出庫登録</button>
+          </>}
           {tab === 'parts' && <button className="button primary" onClick={() => { setVersions([]); setEditor({ mode: 'create', values: { ...emptyPart, system_id: selected } }) }}>＋ 部品を追加</button>}
           {tab === 'systems' && <button className="button primary" onClick={() => setSystemModal({ name: '' })}>＋ 新規システム名称を登録</button>}
           {tab === 'equipment' && <button className="button primary" disabled={!selected} onClick={() => setEquipmentModal({ name: '', alias: '', system_id: Number(selected) })}>＋ 機器を追加</button>}
@@ -578,10 +595,10 @@ export default function App() {
           } onClick={applyImport}>取り込みを確定</button>}
       </div>
     </Modal>}
-    {movementModal && <Modal title="入出庫を登録" onClose={() => setMovementModal(false)}>
+    {movementModal && <Modal title={movement.direction === 'IN' ? '入庫登録' : '出庫登録'} onClose={() => setMovementModal(false)}>
       <div className="form-grid">
         <label className="field">システム<input disabled value={systems.find(s => String(s.id) === selected)?.name ?? ''} /></label>
-        <label className="field">区分<select value={movement.direction} onChange={e => setMovement(p => ({ ...p, direction: e.target.value as 'IN' | 'OUT' }))}><option value="IN">補充</option><option value="OUT">使用</option></select></label>
+        <label className="field">区分<input disabled value={movement.direction === 'IN' ? '補充' : '使用'} /></label>
         <div className="field wide">部品の検索・選択（品番・型式・品名）
           <div className="part-search-row">
             <input autoFocus aria-label="部品を直接入力して検索" value={partSearch} onChange={e => { setPartSearch(e.target.value); setPickedPart(null) }} placeholder="品番を直接入力、または候補から選択" />
@@ -590,13 +607,16 @@ export default function App() {
               setPartPicker(true)
             }}>一覧から選択</button>
           </div>
-          {chosenPart ? <p className="selected-part">選択中：{label(chosenPart)}{!pickedPart && '（完全一致）'}</p> : <div className="suggestions">{candidates.map(p => <button key={p.id} onClick={() => choosePart(p)}>{label(p)}</button>)}<button className="create-suggestion" onClick={openNewPart}>＋ 未登録品を新規登録する</button></div>}
+          {chosenPart ? <p className="selected-part">選択中：{label(chosenPart)}{!pickedPart && '（完全一致）'}</p> : <div className="suggestions">{candidates.map(p => <button key={p.id} onClick={() => choosePart(p)}>{label(p)}</button>)}{movement.direction === 'IN' && <button className="create-suggestion" onClick={openNewPart}>＋ 未登録品を新規登録する</button>}</div>}
         </div>
-        <label className="field">数量<input type="number" min="1" step="1" value={movement.quantity} onChange={e => setMovement(p => ({ ...p, quantity: e.target.value }))} /></label>
+        <label className="field">数量<input type="number" min="1" step="1" max={movement.direction === 'OUT' ? chosenStock?.quantity : undefined} value={movement.quantity} onChange={e => setMovement(p => ({ ...p, quantity: e.target.value }))} /></label>
+        {movement.direction === 'OUT' && <p className="help">出庫候補は現在庫が1以上の部品のみ（旧品番を含む）。{chosenStock ? '選択部品の現在庫：' + chosenStock.quantity + '個' : ''}</p>}
         <label className="field">登録者名<input value={movement.operator} onChange={e => setMovement(p => ({ ...p, operator: e.target.value }))} /></label>
         <label className="field wide">備考（任意）<input value={movement.note} onChange={e => setMovement(p => ({ ...p, note: e.target.value }))} /></label>
       </div>
-      <div className="dialog-actions"><button className="button secondary" onClick={() => setMovementModal(false)}>キャンセル</button><button className="button primary" disabled={busy || !chosenPart} onClick={submitMovement}>履歴を登録</button></div>
+      <div className="dialog-actions"><button className="button secondary" onClick={() => setMovementModal(false)}>キャンセル</button><button className="button primary" disabled={busy || !chosenPart || (movement.direction === 'OUT' && (
+          !chosenStock || !Number.isInteger(Number(movement.quantity)) || Number(movement.quantity) > chosenStock.quantity
+        ))} onClick={submitMovement}>{movement.direction === 'IN' ? '入庫を登録' : '出庫を登録'}</button></div>
     </Modal>}
     {movementModal && partPicker && <Modal title="部品一覧から選択" onClose={() => setPartPicker(false)}>
       <div className="form-grid picker-filters">
@@ -629,7 +649,7 @@ export default function App() {
               <td>{categories.find(c => c.id === p.category_id)?.name ?? '—'}</td>
               <td><button className="button tiny secondary" onClick={() => choosePart(p)}>選択</button></td></tr>)}</tbody>
         </table>
-        {!pickerParts.length && <p className="empty">条件に一致する現行品がありません。</p>}
+        {!pickerParts.length && <p className="empty">{movement.direction === 'IN' ? '条件に一致する現行品がありません。' : '条件に一致する在庫ありの部品がありません。'}</p>}
       </div>
       <div className="dialog-actions">
         <button className="button secondary" onClick={() => setPartPicker(false)}>閉じる</button>
