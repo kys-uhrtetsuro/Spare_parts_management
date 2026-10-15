@@ -56,15 +56,69 @@ class InventoryTests(TestCase):
             replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 0}])
         self.assertEqual(StockAlertSetting.objects.get().threshold, 3)
 
-    def test_part_version_keeps_id_and_ledger_snapshot(self):
+    def test_successor_keeps_old_identifier_and_its_stock(self):
         old = self.movement("IN", 3)
-        change_part(self.part, {"part_number": "P200", "model_number": "V2", "name": "センサ2"})
-        self.part.refresh_from_db()
-        self.assertEqual(self.part.part_number, "P200")
-        self.assertEqual(self.part.pk, old.part_id)
-        self.assertEqual(StockHistory.objects.get(pk=old.pk).part_number_snapshot, "P100")
-        self.assertEqual(PartVersion.objects.get().old_model_number, "V1")
-        self.assertEqual(inventory_rows()[0]["quantity"], 3)
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "センサ2",
+        })
+        self.assertNotEqual(successor.id, self.part.id)
+        self.assertEqual(successor.previous_part_id, self.part.id)
+        self.assertEqual((self.part.part_number, self.part.model_number), ("P100", "V1"))
+        history = StockHistory.objects.get(pk=old.pk)
+        self.assertEqual((history.part_id, history.part_number_snapshot), (self.part.id, "P100"))
+        self.assertEqual(inventory_rows()[0]["part_number"], "P100")
+        self.movement("IN", 2, part=successor)
+        self.assertEqual(
+            {r["part_number"]: r["quantity"] for r in inventory_rows()},
+            {"P100": 3, "P200": 2},
+        )
+        self.assertEqual(PartVersion.objects.get().part_id, self.part.id)
+        with self.assertRaises(InputError):
+            self.movement("OUT", 4, part=successor)
+
+    def test_model_only_and_double_change_linkage(self):
+        original = self.movement("IN", 8)
+        intermediate = change_part(self.part, {
+            "part_number": "P100", "model_number": "V2", "name": "センサ",
+        })
+        final = change_part(intermediate, {
+            "part_number": "P200", "model_number": "V3", "name": "センサ改",
+        })
+        self.assertEqual(intermediate.previous_part_id, self.part.pk)
+        self.assertEqual(final.previous_part_id, intermediate.pk)
+        self.assertEqual(StockHistory.objects.get(pk=original.pk).model_number_snapshot, "V1")
+        self.assertEqual(inventory_rows()[0]["model_number"], "V1")
+        self.assertEqual(inventory_rows()[0]["quantity"], 8)
+        self.assertEqual(PartVersion.objects.count(), 2)
+        response = self.client.get(f"/api/parts/{final.pk}/versions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["items"]), 2)
+
+    def test_machine_section_category_reverse_lookup(self):
+        machine = EquipmentMaster.objects.create(name="搬送装置")
+        section = EquipmentSection.objects.create(equipment=machine, name="制御盤")
+        category = PartCategory.objects.create(name="制御機器")
+        self.part.equipment = machine
+        self.part.section = section
+        self.part.category = category
+        self.part.save()
+        another = PartMaster.objects.create(
+            part_number="P500", model_number="V1", name="ベアリング",
+        )
+        self.movement("IN", 2)
+        self.movement("IN", 3, part=another)
+        params = f"?equipment={machine.pk}&section={section.pk}&category={category.pk}"
+        result = self.client.get("/api/parts" + params)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual([row["id"] for row in result.json()["items"]], [self.part.pk])
+        rows = self.client.get("/api/stocks" + params).json()["items"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["part_id"], self.part.pk)
+        from openpyxl import load_workbook
+        excel = self.client.get("/api/export" + params)
+        ws = load_workbook(io.BytesIO(b"".join(excel.streaming_content))).active
+        self.assertEqual(ws.max_row, 2)
+        self.assertEqual(ws["B2"].value, "P100")
 
     def test_correction_is_append_only_and_cannot_breach_zero(self):
         original = self.movement("IN", 5)

@@ -72,6 +72,9 @@ export default function App() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [selected, setSelected] = useState('')
   const [query, setQuery] = useState('')
+  const [equipmentFilter, setEquipmentFilter] = useState('')
+  const [sectionFilter, setSectionFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -127,12 +130,34 @@ export default function App() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false }
     finally { setBusy(false) }
   }
-  const filteredStocks = useMemo(() => stocks.filter(x =>
+  // Reverse lookup: all parts assigned to the selected equipment, section, category,
+  // regardless of current stock, plus the equivalent filter on the stock overview.
+  const matchesClassifications = (p: Part) =>
+    (!equipmentFilter || String(p.equipment_id) === equipmentFilter) &&
+    (!sectionFilter || String(p.section_id) === sectionFilter) &&
+    (!categoryFilter || String(p.category_id) === categoryFilter)
+  const matchedIds = new Set(parts.filter(matchesClassifications).map(p => p.id))
+  const filteredStocks = stocks.filter(x =>
+    matchedIds.has(x.part_id) &&
     [x.system, x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(query.toLowerCase()))
-  ), [stocks, query])
-  const filteredParts = useMemo(() => parts.filter(x =>
-    [x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(query.toLowerCase()))
-  ), [parts, query])
+  )
+  const filteredParts = parts.filter(x =>
+    matchesClassifications(x) &&
+    [x.part_number, x.model_number, x.name,
+      equipments.find(e => e.id === x.equipment_id)?.name ?? '',
+      equipments.find(e => e.id === x.equipment_id)?.alias ?? '',
+      sections.find(sec => sec.id === x.section_id)?.name ?? '',
+      categories.find(c => c.id === x.category_id)?.name ?? '',
+    ].some(v => v.toLowerCase().includes(query.toLowerCase()))
+  )
+  const viewMatchingParts = (equipmentId = '', categoryId = '') => {
+    setEquipmentFilter(equipmentId)
+    setSectionFilter('')
+    setCategoryFilter(categoryId)
+    setQuery('')
+    setTab('parts')
+  }
+
   const candidates = partSearch.trim() ? parts.filter(x =>
     [x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(partSearch.trim().toLowerCase()))
   ).slice(0, 4) : []
@@ -261,9 +286,34 @@ export default function App() {
           </select>
         </label>}
         {tab !== 'alerts' && tab !== 'systems' && tab !== 'equipment' && tab !== 'categories' && <label className="field grow">検索<input value={query} onChange={e => setQuery(e.target.value)} placeholder="品番・型式・品名で検索" /></label>}
+        {(tab === 'parts' || tab === 'stock') && <>
+          <label className="field compact">機器
+            <select aria-label="機器で絞り込み" value={equipmentFilter} onChange={e => { setEquipmentFilter(e.target.value); setSectionFilter('') }}>
+              <option value="">すべて</option>
+              {equipments.map(e => <option key={e.id} value={e.id}>{e.name}{e.alias ? '（' + e.alias + '）' : ''}</option>)}
+            </select>
+          </label>
+          <label className="field compact">部位
+            <select aria-label="部位で絞り込み" value={sectionFilter} disabled={!equipmentFilter} onChange={e => setSectionFilter(e.target.value)}>
+              <option value="">すべて</option>
+              {sections.filter(sec => String(sec.equipment_id) === equipmentFilter).map(sec => <option key={sec.id} value={sec.id}>{sec.name}</option>)}
+            </select>
+          </label>
+          <label className="field compact">分類
+            <select aria-label="分類で絞り込み" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+              <option value="">すべて</option>
+              {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+            </select>
+          </label>
+        </>}
         <div className="toolbar-actions">
           {tab === 'stock' && <>
-            <a className="button secondary" href={'/api/export' + (selected ? '?system=' + selected : '')}>Excel出力</a>
+            <a className="button secondary" href={'/api/export?' + new URLSearchParams({
+              ...(selected ? { system: selected } : {}),
+              ...(equipmentFilter ? { equipment: equipmentFilter } : {}),
+              ...(sectionFilter ? { section: sectionFilter } : {}),
+              ...(categoryFilter ? { category: categoryFilter } : {}),
+            }).toString()}>Excel出力</a>
             <button className="button primary" onClick={openMovement} disabled={!selected}>＋ 入出庫を登録</button>
           </>}
           {tab === 'history' && <button className="button primary" disabled={!selected} onClick={openMovement}>＋ 入出庫を登録</button>}
@@ -299,7 +349,13 @@ export default function App() {
             <td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td>
             <td>{equipments.find(e => e.id === p.equipment_id)?.name ?? '—'}{p.section_id && <small> / {sections.find(x => x.id === p.section_id)?.name}</small>}</td>
             <td>{categories.find(c => c.id === p.category_id)?.name ?? '—'}</td>
-            <td>{p.previous_part_id ? parts.find(x => x.id === p.previous_part_id)?.part_number ?? '—' : '—'}</td>
+            <td>
+              {p.previous_part_id ? <span className="lineage-tag">前：{(() => {
+                const prev = parts.find(x => x.id === p.previous_part_id)
+                return prev ? prev.part_number + ' / ' + prev.model_number : '—'
+              })()}</span> : '—'}
+              {parts.some(x => x.previous_part_id === p.id) && <span className="lineage-tag">後継あり</span>}
+            </td>
             <td><button className="button tiny secondary" onClick={() => openEditor(p)}>編集・後継登録</button></td>
           </tr>)}</tbody></table></div>
         {!filteredParts.length && <p className="empty">登録部品がありません。</p>}
@@ -313,15 +369,24 @@ export default function App() {
         <div className="system-grid">{equipments.map(e => <div className="system-card" key={e.id}>
           <strong>{e.name}</strong>{e.alias && <small>通称：{e.alias}</small>}
           <div className="master-card-actions"><button className="button tiny secondary" onClick={() => setEquipmentModal({ ...e })}>編集</button>
+          <button className="button tiny secondary" onClick={() => viewMatchingParts(String(e.id))}>関連部品を見る</button>
           <button className="button tiny secondary" onClick={() => setSectionModal({ equipment_id: e.id, name: '' })}>＋ 部位を追加</button></div>
           {sections.filter(section => section.equipment_id === e.id).map(section =>
-            <div key={section.id} className="section-row"><span>{section.name}</span><button className="button tiny secondary" onClick={() => setSectionModal({ ...section })}>編集</button></div>)}
+            <div key={section.id} className="section-row"><span>{section.name}</span><div className="master-card-actions">
+              <button className="button tiny secondary" onClick={() => {
+                viewMatchingParts(String(e.id)); setSectionFilter(String(section.id))
+              }}>関連部品</button>
+              <button className="button tiny secondary" onClick={() => setSectionModal({ ...section })}>編集</button>
+            </div></div>)}
         </div>)}</div>{equipments.length === 0 && <p className="empty">機器マスタが未登録です。</p>}
       </section>}
       {tab === 'categories' && <section className="panel">
         <div className="panel-head"><h2>部品分類マスタ</h2></div>
         <div className="system-grid">{categories.map(c => <div className="system-card" key={c.id}>
-          <strong>{c.name}</strong><button className="button tiny secondary" onClick={() => setCategoryModal({ ...c })}>名称変更</button>
+          <strong>{c.name}</strong><div className="master-card-actions">
+            <button className="button tiny secondary" onClick={() => viewMatchingParts('', String(c.id))}>関連部品を見る</button>
+            <button className="button tiny secondary" onClick={() => setCategoryModal({ ...c })}>名称変更</button>
+          </div>
         </div>)}</div>{categories.length === 0 && <p className="empty">分類が未登録です。</p>}
       </section>}
       {tab === 'alerts' && <section className="panel"><div className="panel-head"><h2>監視部品の選択</h2><span className="help">下限値は必ず1以上の整数 / 未設定は監視対象外</span></div>
