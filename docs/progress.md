@@ -115,6 +115,14 @@
 - [未対応・GitHub設定操作] リポジトリのdefault_branchは現在もmain。GitHubのSettings → General → Default branchでReleaseへ切替が必要。その後mainを削除すれば完全移行（この操作は接続中のGitHubツールでは非対応）
 - [未確認] ユーザーWindows PCでのWebView2起動・タスクバーアイコンの実機確認
 
+## Nuitkaコンパイルキャッシュ（次回ビルド用）
+- [実装済み・マージ待ち] `feature/nuitka-cache` で `NUITKA_CACHE_DIR` を固定し、GitHub Actionsのrestore/saveでCコンパイル結果（ccache/clcache）を継続利用
+- [実装済み・マージ待ち] キャッシュキーはWindows/x64・Python 3.12・`requirements.txt` のハッシュで分離。各実行は固有キーで保存し、次回は互換キーから復元
+- [実装済み・マージ待ち] ビルド成功直後にキャッシュを保存し、配布ZIP登録の成否とは分離
+- [実装済み・マージ待ち] workflow本体と進捗文書のみの更新はWindowsビルドを再起動しない。手動実行は維持
+- [注意] ReleaseのNuitkaコンパイルが実行中のため、終了するまではブランチをReleaseへ統合しない（統合すると実行中の成果物登録がスキップされる）
+- [検証待ち] Release統合後のビルド初回でキャッシュ保存、2回目以降でキャッシュ復元とヒット率を確認。高速化の程度はC生成コードの差分次第
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常
