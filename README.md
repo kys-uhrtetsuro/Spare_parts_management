@@ -1,56 +1,76 @@
 # 予備品管理システム
 
-Windows向けローカル在庫管理アプリ。React + Django + SQLite + pywebview + Nuitka。
+React + Django + SQLite + pywebview + Nuitka によるWindows用ローカル在庫管理。
 
-## 主な機能
+## 機能
 
-- システム別の補充・使用履歴から現在庫を計算（マイナス在庫は禁止）
-- 品番・型式・品名の検索補完、未登録品の明示的なマスタ登録
-- 品番だけ・型式だけ・両方の更新（同一部品IDを継承、変更履歴も記録）
-- 履歴は削除・上書きせず、逆仕訳と訂正履歴を追加
-- 下限アラートの2列選択・一括保存（下限は1以上、未設定は監視対象外）
-- 現在庫が1以上、または下限監視対象の部品をExcel出力（監視対象の0個を含む）
+- システムマスタ（同一SQLiteに複数システム、親拠点や住所のDB管理は不要）
+- 品番・型式・品名の複合マスタとオートコンプリート、未登録品の明示登録
+- 補充/使用の履歴蓄積で現在庫を集計、マイナス在庫は禁止
+- 履歴訂正は取消逆仕訳＋新規履歴の追記（元履歴は変更せず保持）
+- 品番/型式/両方の変更と履歴引継ぎ（IDと現在庫は維持、変更履歴・履歴時点の値を保存）
+- Django Adminの選択画面を参考にした下限設定2列UI、設定値1以上、複数件一括保存
+- 現在庫1以上もしくは下限設定ありをExcelで出力（設定済み0個も出力）
+- DBバックアップ作成
 
-## 開発環境
+## 必要環境
 
-Python 3.12、Node.js 24、Windows 10/11 (WebView2 Runtime)。
+- 開発: Python 3.12、Node.js 24、npm
+- 利用者: Windows 10/11、Microsoft Edge WebView2 Runtime。Python、Node.js、DBサーバーは不要
+- SQLiteのファイルはEXEと別に保存。配布先のフォルダに書込権限が必要
+
+## 開発時の実行
+
+Windows PowerShell:
 
 ~~~powershell
 py -3.12 -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 cd frontend
-npm ci
+npm install
 npm run build
 cd ..
 python backend/manage.py migrate
 python launcher.py
 ~~~
 
-Windows以外でバックエンドのテストを実行する場合:
+フロント開発: 別ターミナルで \`python backend/manage.py runserver 127.0.0.1:8000\`、
+\`cd frontend && npm run dev\`。ViteはAPIをローカルDjangoへプロキシする。
 
-~~~bash
-python -m pip install -r requirements.txt
+Djangoの自動テスト:
+
+~~~powershell
 python backend/manage.py test inventory
+python backend/manage.py makemigrations --check --dry-run
 ~~~
 
-開発フロントエンド: \`cd frontend && npm run dev\` （ViteのプロキシがローカルDjangoへ接続）。Djangoは別ターミナルで \`python backend/manage.py runserver 127.0.0.1:8000\`。
+## Windows EXE作成
 
-## 配布
+~~~powershell
+./scripts/build_windows.ps1
+~~~
 
-\`scripts/build_windows.ps1\` は依存関係をインストールしてフロントをビルドし、Nuitka standalone のEXEを生成する。CIの Windows build は手動実行。standaloneで動作確認した後、\`-Onefile\` で1ファイルEXE化できる。WebView2 Runtimeは配布先PCに必要。
+Windows向けNuitka standaloneビルドを作成。単体EXEの検証は
+\`./scripts/build_windows.ps1 -Onefile\` で実施（初回はstandalone推奨）。
+GitHub Actions の Windows Nuitkaビルドは手動で実行可能。
+ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1限定のWaitressで動作する。
 
-EXEの隣に \`data/inventory.sqlite3\` を作成する。**データフォルダはGit管理・EXEへの同梱対象外**。EXE更新時もこれを残す。アプリのフォルダは書き込み可能な場所へ配置する。DBバックアップは画面から \`data/backups/\` に生成可能。
+Nuitka と pywebview の既知互換性のため、pywebviewは6.2を採用している。
 
-## 設計・運用
+## 配布・バックアップ
 
-- 親拠点/住所はDBに持たない。1配置ディレクトリにつき1DB、DB内に複数のシステムマスタを持つ。
-- 品番と型式の組を全体でユニークにする。同じ部品を複数システムで管理できる。
-- APIはDjangoが提供。画面は同一オリジンのReact静的ビルドを配信。ログイン不要、127.0.0.1限定、CSRF検証あり。
-- 書込みは単一プロセス内で直列化し、SQLiteトランザクションを使用。複数EXEを同一データフォルダで同時起動しない。
-- SQLite DBをネットワーク共有フォルダに配置する運用は非推奨。
-- マスタ更新の前後の名称はバージョン履歴へ記録。入出庫時点の品番・型式も履歴へスナップショットする。
-- データ移行・バックアップ復元はファイル操作で行う。復元時は**アプリ終了後**にSQLiteファイルを安全なバックアップと入れ替える。
-- CIはLinuxでAPI/React検証、Windowsで手動起動のstandaloneビルドを検証する。
+standalone配布時は \`build/launcher.dist/\` の中身を丸ごとコピーする。
+Windows上で \`SparePartsManagement.exe\` を実行すると自動でマイグレーションし、
+EXEと同じディレクトリの \`data/inventory.sqlite3\` を作成する。
 
-開発状況は \`docs/progress.md\` を参照。
+同じ場所の \`data\` フォルダは更新時にも残す。DBはGit・Nuitkaへ同梱しない。
+画面の「DBバックアップを作成」で \`data/backups/\` に日付付きコピーを作成。
+復元する場合はアプリを完全終了し、バックアップを \`data/inventory.sqlite3\` へコピーする。
+SQLite DBをネットワーク共有ドライブに置かないこと。
+単一データフォルダで複数のEXEを同時起動しないこと。
+
+## 開発方針・進捗
+
+\`docs/progress.md\` にGitブランチと機能別検証状況を記載。
+仕様と進捗を一致させてからmainへマージする。

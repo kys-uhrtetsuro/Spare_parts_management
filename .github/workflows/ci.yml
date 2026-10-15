@@ -1,0 +1,55 @@
+name: 予備品管理 CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  django-and-react:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ソース取得
+        uses: actions/checkout@v4
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Python依存導入
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: DBマイグレーション検査
+        run: python backend/manage.py makemigrations --check --dry-run
+      - name: Django在庫・APIテスト
+        run: python backend/manage.py test inventory --verbosity 2
+      - name: React依存導入
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+      - name: TypeScript / Reactビルド
+        working-directory: frontend
+        run: npm run build
+      - name: Djangoから静的画面を配信する検査
+        run: |
+          python backend/manage.py check
+          python - <<'PY'
+          import os, sys
+          sys.path.insert(0, "backend")
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+          import django
+          django.setup()
+          from django.test import Client
+          result = Client().get("/")
+          assert result.status_code == 200, result.status_code
+          assert b"/assets/" in result.content
+          print("React static delivery OK")
+          PY

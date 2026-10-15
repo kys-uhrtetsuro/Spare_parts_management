@@ -1,6 +1,6 @@
 Django==6.1.2
 waitress==3.0.2
-pywebview==6.2.1
+pywebview==6.2
 pandas==3.0.6
 openpyxl==3.1.5
 Nuitka==4.2.2

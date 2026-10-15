@@ -1,11 +1,10 @@
 import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(os.environ.get("SPARES_RESOURCE_DIR", Path(__file__).resolve().parents[2])).resolve()
 DATA_DIR = Path(os.environ.get("SPARES_DATA_DIR", BASE_DIR / "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Local application: preserve the signing key across EXE upgrades.
 key_file = DATA_DIR / ".django-secret"
 if not key_file.exists():
     from django.core.management.utils import get_random_secret_key
