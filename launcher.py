@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 def application_paths():
+    # Nuitka onefile: __file__ is the temporary extraction folder;
+    # sys.argv[0] is the original EXE path where persistent SQLite belongs.
     resource_root = Path(__file__).resolve().parent
     app_root = Path(sys.argv[0]).resolve().parent
     os.environ["SPARES_RESOURCE_DIR"] = str(resource_root)

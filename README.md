@@ -64,35 +64,46 @@ Windowsビルド成功時に生成物もGitへコミットする。
 
 ## Windows EXE作成
 
+Windows PowerShell:
+
 ~~~powershell
 ./scripts/build_windows.ps1
 ~~~
 
-Windows向けNuitka standaloneビルドを作成。単体EXEの検証は
-\`./scripts/build_windows.ps1 -Onefile\` で実施（初回はstandalone推奨）。
-GitHub Actions は開発ブランチ更新時に Windows Nuitkaビルドし、成功した配布ZIPを releases/SparePartsManagement-standalone.zip としてGitにコミットする（約数十MB）。
-ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1限定のWaitressで動作する。
+**Onefileが標準**で、`build/SparePartsManagement.exe` の1ファイルを生成します。
+Python・React・依存ライブラリ・アイコンを同梱しています。
+調査用standalone版を作る場合だけ `./scripts/build_windows.ps1 -Standalone` を使います。
+Windowsでは別途 Microsoft Edge WebView2 Runtime が必要です。
 
-Nuitka と pywebview の既知互換性のため、pywebviewは6.2を採用している。
+GitHub ActionsではOnefile EXEを単体の成果物として提供し、
+90MiB以内なら `releases/SparePartsManagement.exe` にコミットします。
+Gitの容量制限を超える場合はGitHub ReleasesでEXEを直接配布します。
 
-部品は手入力（既存品番が一意に完全一致する場合）・少数件の候補補完・スクロール可能な一覧モーダルで選択可能。未登録品は明示操作で新規登録する。
+Nuitka と pywebviewの互換性のため、pywebview 6.2 を採用しています。
+ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1だけで動作します。
 
 ## 配布・バックアップ
 
-standalone配布時は \`build/launcher.dist/\` の中身を丸ごとコピーする。
-Windows上で \`SparePartsManagement.exe\` を実行すると自動でマイグレーションし、
-EXEと同じディレクトリの \`data/inventory.sqlite3\` を作成する。
+配布に必要なのは **`SparePartsManagement.exe` 1本**です。
+初回起動時にEXEと同じディレクトリへ `data/inventory.sqlite3` を
+**自動生成**し、Djangoのマイグレーションで必要なテーブルを作ります。
+既存DBがあればそのまま利用し、未適用のマイグレーションだけ実行します。
 
-同じ場所の \`data\` フォルダは更新時にも残す。DBはGit・Nuitkaへ同梱しない。
-画面の「DBバックアップを作成」で \`data/backups/\` に日付付きコピーを作成。
-復元する場合はアプリを完全終了し、バックアップを \`data/inventory.sqlite3\` へコピーする。
-SQLite DBをネットワーク共有ドライブに置かないこと。
-単一データフォルダで複数のEXEを同時起動しないこと。
+Onefile起動時、アプリの画面・アイコン・依存ライブラリは一時フォルダへ展開します。
+**SQLiteは一時フォルダへ置きません**。EXEを差し替えてもDBと履歴は残ります。
+
+`data` にはSQLite以外に起動用の秘密鍵・ロックファイル・バックアップも置かれます。
+配布ZIP、Python、DLLなどをDBの隣へ置く必要はありません。
+`data` フォルダは削除・上書きせず残してください。
+「DBバックアップを作成」は `data/backups/` へ保存します。
+復元する際はアプリを終了してバックアップを `data/inventory.sqlite3` へコピーします。
+EXEが置かれたフォルダには書込権限が必要です。ネットワーク共有ドライブ上で
+SQLiteを運用したり、同じデータフォルダでEXEを同時起動したりしないでください。
 
 ## 開発方針・進捗
 
 \`docs/progress.md\` にGitブランチと機能別検証状況を記載。
-仕様と進捗を一致させてからmainへマージする。
+仕様と進捗を一致させてからReleaseへマージする。
 
 既存データの品番上書きはマイグレーション0003で過去のスナップショットに基づき復元する。更新前にバックアップを取ること。
 
@@ -166,12 +177,11 @@ Windowsに以前のアイコンでタスクバーへピン留めしたショー�
 
 ## ブランチとWindows配布
 
-配布基準は `Release`、開発ブランチは `feature/initial-implementation`。
-Windows Nuitkaワークフローは `Release` の更新時のみビルドし、
-`concurrency` で古い実行を停止する。
-配布物は `releases/SparePartsManagement-standalone.zip`。
-その中に `SparePartsManagement.exe` とリソースを同梱する。
-作業データの `data/inventory.sqlite3` は更新時に上書きしない。
+配布基準は `Release`。GitHub ActionsのWindowsビルドは
+`Release` 上のコード更新時にのみ動作し、古いビルドはキャンセルされます。
+成果物は `SparePartsManagement.exe` 単体で、90MiB以内ならGitへ登録し、
+それ以上ならGitHub Releasesへ登録します。
+SQLiteファイルはEXE外部の `data/inventory.sqlite3` に固定します。
 
 ## 1部品に対する複数機器・部位の割当
 
