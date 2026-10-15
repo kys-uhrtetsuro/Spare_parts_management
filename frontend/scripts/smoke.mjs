@@ -150,7 +150,7 @@ try {
   const currentPicker = page.getByRole('dialog', { name: '部品一覧から選択' })
   await currentPicker.getByPlaceholder('一覧から部品を検索').fill('P100')
   assert.equal(await currentPicker.getByRole('button', { name: '選択', exact: true }).count(), 0)
-  await currentPicker.getByRole('button', { name: '閉じる' }).click()
+  await currentPicker.getByRole('button', { name: '閉じる', exact: true }).last().click()
   await replenishment.getByLabel('部品を直接入力して検索').fill('P200')
   await replenishment.getByText('（完全一致）').waitFor()
   await replenishment.getByLabel('数量').fill('2')
