@@ -83,93 +83,96 @@ jobs:
           key: nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-
-      - name: Onefile・Standalone両方をビルド
+      - name: Nuitka standaloneとC製ランチャーをビルド
         id: nuitka-build
         shell: pwsh
-        run: ./scripts/build_windows.ps1 -Both
+        run: ./scripts/build_windows.ps1
       - name: Nuitkaコンパイルキャッシュを保存
         if: ${{ steps.nuitka-build.outcome == 'success' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: ${{ steps.nuitka-cache.outputs.cache-primary-key }}
-      - name: Onefile EXE成果物を保存
-        uses: actions/upload-artifact@v4
-        with:
-          name: SparePartsManagement-onefile
-          path: build/SparePartsManagement.exe
-          if-no-files-found: error
       - name: Standalone成果物を保存
         uses: actions/upload-artifact@v4
         with:
           name: SparePartsManagement-standalone
-          path: build/launcher.dist/
+          path: build/SparePartsManagement-package/
           if-no-files-found: error
-      - name: 両方式をreleasesへ配布登録
+      - name: Standalone ZIPをreleasesへ配布登録
         if: ${{ github.ref == 'refs/heads/Release' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exePath = 'build/SparePartsManagement.exe'
-          $standalonePath = 'build/launcher.dist/SparePartsManagement.exe'
-          if (-not (Test-Path $exePath -PathType Leaf)) { throw 'Onefile EXEがありません' }
-          if (-not (Test-Path $standalonePath -PathType Leaf)) { throw 'Standalone EXEがありません' }
+          $package = 'build/SparePartsManagement-package'
+          $outer = "$package/SparePartsManagement.exe"
+          $inner = "$package/src/SparePartsManagement.exe"
+          $locale = "$package/src/django/conf/locale/ja/LC_MESSAGES/django.mo"
+          foreach ($required in @($outer, $inner, $locale)) {
+            if (-not (Test-Path $required -PathType Leaf)) { throw "成果物がありません: $required" }
+          }
+          $rootFiles = @(Get-ChildItem $package -File)
+          if ($rootFiles.Count -ne 1 -or $rootFiles[0].Name -ne 'SparePartsManagement.exe') {
+            throw '配布フォルダのルートに予期しないファイルがあります'
+          }
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          $standaloneZip = 'releases/SparePartsManagement-standalone.zip'
-          Compress-Archive -Path 'build/launcher.dist/*' -DestinationPath $standaloneZip -CompressionLevel Optimal -Force
+          $zip = 'releases/SparePartsManagement-standalone.zip'
+          Compress-Archive -Path "$package/*" -DestinationPath $zip -CompressionLevel Optimal -Force
 
           git fetch origin $env:GITHUB_REF_NAME
           $remoteHead = (git rev-parse FETCH_HEAD).Trim()
-          $localHead = (git rev-parse HEAD).Trim()
-          if ($remoteHead -ne $localHead) {
-            $changedPaths = @(git diff --name-only $localHead $remoteHead)
+          $sourceHead = (git rev-parse HEAD).Trim()
+          if ($remoteHead -ne $sourceHead) {
+            $changedPaths = @(git diff --name-only $sourceHead $remoteHead)
             $codeChanges = @($changedPaths | Where-Object { $_ -notin @('docs/progress.md', 'README.md') })
             if ($codeChanges.Count -gt 0) {
-              Write-Host 'ソースが更新されているので、旧版成果物は登録しません'
+              Write-Host 'コードが更新されたため旧ビルドの登録を中止します'
               exit 0
             }
             git merge --ff-only FETCH_HEAD
-            if ($LASTEXITCODE -ne 0) { throw '進捗文書の更新を取り込めませんでした' }
+            if ($LASTEXITCODE -ne 0) { throw '進捗文書更新を取り込めませんでした' }
           }
 
-          $onefileSize = (Get-Item $exePath).Length
-          $standaloneSize = (Get-Item $standaloneZip).Length
-          $buildTag = "windows-$($localHead.Substring(0,12))"
-          $gitThreshold = 90MB
-          $useReleaseAssets = ($onefileSize -gt $gitThreshold) -or ($standaloneSize -gt $gitThreshold)
+          $zipSize = (Get-Item $zip).Length
+          $tag = "windows-$($sourceHead.Substring(0,12))"
+          $useReleaseAssets = $zipSize -gt 90MB
           if ($useReleaseAssets) {
-            # Keep both files together if either exceeds Git's per-blob limit.
-            gh release create $buildTag "$exePath#SparePartsManagement.exe" "$standaloneZip#SparePartsManagement-standalone.zip" --target $localHead --title "Windows配布 $($localHead.Substring(0,12))" --notes "Onefile単体EXEとStandalone ZIPの両方を収録。SQLiteはEXEの隣のdata/inventory.sqlite3に保存します。"
-            if ($LASTEXITCODE -ne 0) { throw 'GitHub Releasesへの成果物登録に失敗しました' }
-          } else {
-            Copy-Item $exePath 'releases/SparePartsManagement.exe' -Force
+            gh release view $tag --json tagName *> $null
+            if ($LASTEXITCODE -eq 0) {
+              gh release upload $tag "$zip#SparePartsManagement-standalone.zip" --clobber
+            } else {
+              gh release create $tag "$zip#SparePartsManagement-standalone.zip" --target $sourceHead --title "Windows配布 $($sourceHead.Substring(0,12))" --notes "Nuitka standalone。ZIPを全展開してルートのEXEを起動してください。既存data/は維持してください。"
+            }
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub Releases登録失敗' }
           }
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           $progressPath = 'docs/progress.md'
           $progress = Get-Content $progressPath -Raw -Encoding UTF8
-          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows Onefile・Standalone: 両方式をビルドして配布登録済み。Windows実機GUIは未確認'
-          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | 両方式ビルド成功 | EXEとStandalone ZIPを配布済み | Windows実機GUI未確認 |'
-          $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\r?\n', ''
-          $progress = $progress -replace '(?m)^- Onefile成果物:.*\r?\n', ''
-          $progress += "`n- 配布成果物ビルド元: $localHead`n"
-          $progress += "- 配布成果物: Onefile EXE $onefileSize bytes、Standalone ZIP $standaloneSize bytes（Git制限超過時はGitHub Releases）`n"
+          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows standalone: ZIP配布済み。Windows実機GUIとセキュリティソフトは未確認'
+          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone \|[^\r\n]*$', '| Nuitka Windows standalone | src集約＋C製ランチャー実装 | Windowsビルド成功・ZIP配布済み | 未確認 |'
+          $progress = $progress -replace '(?m)^- Standalone配布ビルド元:.*\r?\n', ''
+          $progress = $progress -replace '(?m)^- Standalone配布ZIP:.*\r?\n', ''
+          $progress += [Environment]::NewLine + "- Standalone配布ビルド元: $sourceHead"
+          $progress += [Environment]::NewLine + "- Standalone配布ZIP: $zipSize bytes（Git制限超過時はGitHub Releases）" + [Environment]::NewLine
           Set-Content -Path $progressPath -Value $progress -Encoding UTF8
+
           git add docs/progress.md assets/spare_parts.ico frontend/src/assets/spare_parts.png
+          git rm -f --ignore-unmatch releases/SparePartsManagement.exe
           if ($useReleaseAssets) {
-            git rm -f --ignore-unmatch releases/SparePartsManagement.exe releases/SparePartsManagement-standalone.zip
+            git rm -f --ignore-unmatch releases/SparePartsManagement-standalone.zip
           } else {
-            git add -f releases/SparePartsManagement.exe releases/SparePartsManagement-standalone.zip
+            git add -f releases/SparePartsManagement-standalone.zip
           }
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) {
             Write-Host '配布成果物に変更はありません'
             exit 0
           }
-          git commit -m 'Windows OnefileとStandaloneの配布成果物を更新'
-          if ($LASTEXITCODE -ne 0) { throw 'コミットに失敗しました' }
+          git commit -m 'Windows standalone配布ZIPと進捗を更新'
+          if ($LASTEXITCODE -ne 0) { throw 'Gitコミット失敗' }
           git push origin HEAD:$env:GITHUB_REF_NAME
-          if ($LASTEXITCODE -ne 0) { throw '配布物のプッシュに失敗しました' }
+          if ($LASTEXITCODE -ne 0) { throw 'Gitプッシュ失敗' }

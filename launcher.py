@@ -13,7 +13,8 @@ def application_paths():
     # Nuitka onefile: __file__ is the temporary extraction folder;
     # sys.argv[0] is the original EXE path where persistent SQLite belongs.
     resource_root = Path(__file__).resolve().parent
-    app_root = Path(sys.argv[0]).resolve().parent
+    # Native outer launcher supplies this root; in direct/onefile mode keep the original path.
+    app_root = Path(os.environ.get("SPARES_APP_ROOT") or Path(sys.argv[0]).resolve().parent).resolve()
     os.environ["SPARES_RESOURCE_DIR"] = str(resource_root)
     os.environ["SPARES_DATA_DIR"] = str(app_root / "data")
     sys.path.insert(0, str(resource_root / "backend"))

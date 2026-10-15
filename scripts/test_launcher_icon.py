@@ -25,10 +25,11 @@ class NativeIconTests(unittest.TestCase):
             old_argv = list(launcher.sys.argv)
             old_env = {
                 key: launcher.os.environ.get(key)
-                for key in ("SPARES_RESOURCE_DIR", "SPARES_DATA_DIR")
+                for key in ("SPARES_RESOURCE_DIR", "SPARES_DATA_DIR", "SPARES_APP_ROOT")
             }
             old_sys_path = list(launcher.sys.path)
             try:
+                launcher.os.environ.pop("SPARES_APP_ROOT", None)
                 launcher.__file__ = str(unpacked / "launcher.py")
                 launcher.sys.argv = [str(binary)]
                 self.assertEqual(launcher.application_paths(), binary.parent)
@@ -48,6 +49,37 @@ class NativeIconTests(unittest.TestCase):
                 launcher.__file__ = old_file
                 launcher.sys.argv = old_argv
                 launcher.sys.path[:] = old_sys_path
+                for key, value in old_env.items():
+                    if value is None:
+                        launcher.os.environ.pop(key, None)
+                    else:
+                        launcher.os.environ[key] = value
+
+    def test_native_launcher_keeps_existing_sqlite_beside_outer_exe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "portable"
+            resources = root / "src"
+            resources.mkdir(parents=True)
+            old_file, old_argv = launcher.__file__, list(launcher.sys.argv)
+            old_path = list(launcher.sys.path)
+            keys = ("SPARES_APP_ROOT", "SPARES_RESOURCE_DIR", "SPARES_DATA_DIR")
+            old_env = {key: launcher.os.environ.get(key) for key in keys}
+            try:
+                launcher.__file__ = str(resources / "launcher.py")
+                launcher.sys.argv = [str(resources / "SparePartsManagement.exe")]
+                launcher.os.environ["SPARES_APP_ROOT"] = str(root)
+                self.assertEqual(launcher.application_paths(), root)
+                self.assertEqual(Path(launcher.os.environ["SPARES_RESOURCE_DIR"]), resources)
+                self.assertEqual(Path(launcher.os.environ["SPARES_DATA_DIR"]), root / "data")
+                db = root / "data" / "inventory.sqlite3"
+                db.parent.mkdir()
+                db.write_bytes(b"preserved")
+                launcher.application_paths()
+                self.assertEqual(db.read_bytes(), b"preserved")
+                self.assertFalse((resources / "data").exists())
+            finally:
+                launcher.__file__, launcher.sys.argv = old_file, old_argv
+                launcher.sys.path[:] = old_path
                 for key, value in old_env.items():
                     if value is None:
                         launcher.os.environ.pop(key, None)
