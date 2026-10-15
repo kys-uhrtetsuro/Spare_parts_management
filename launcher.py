@@ -42,36 +42,38 @@ def free_port():
 
 
 
-def set_windows_window_icon(icon_path):
-    """Assign Windows small/big title-bar icons without pywebview internals."""
-    if os.name != "nt" or not icon_path.is_file():
-        return
-    try:
-        import ctypes
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
-        user32.FindWindowW.restype = ctypes.c_void_p
-        hwnd = user32.FindWindowW(None, "予備品管理システム")
-        if not hwnd:
-            return
+APP_USER_MODEL_ID = "KYS.SparePartsManagement.Desktop"
 
-        user32.LoadImageW.argtypes = [
-            ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint,
-            ctypes.c_int, ctypes.c_int, ctypes.c_uint,
-        ]
-        user32.LoadImageW.restype = ctypes.c_void_p
-        user32.SendMessageW.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
-        ]
-        user32.SendMessageW.restype = ctypes.c_ssize_t
-        for slot, size in ((0, 16), (1, 32)):
-            # IMAGE_ICON=1, LR_LOADFROMFILE=0x10, WM_SETICON=0x80
-            handle = user32.LoadImageW(None, str(icon_path), 1, size, size, 0x10)
-            if handle:
-                user32.SendMessageW(hwnd, 0x80, slot, handle)
-    except OSError:
-        # Cosmetic failure must never prevent the application from starting.
-        pass
+
+def icon_path_for(resource_root):
+    """Return the bundled icon. Never silently fall back to the Python icon."""
+    icon = Path(resource_root) / "assets" / "spare_parts.ico"
+    if not icon.is_file():
+        raise FileNotFoundError(f"アプリアイコンが見つかりません: {icon}")
+    return icon
+
+
+def set_windows_app_identity():
+    """Tell Windows the taskbar group identity before opening the native window."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    setter = ctypes.WinDLL("shell32").SetCurrentProcessExplicitAppUserModelID
+    setter.argtypes = [ctypes.c_wchar_p]
+    setter.restype = ctypes.c_long
+    hresult = setter(APP_USER_MODEL_ID)
+    if hresult != 0:
+        raise OSError(f"Windowsタスクバーのアプリ識別子を設定できません: HRESULT {hresult:#x}")
+
+
+def show_desktop(webview, url, resource_root):
+    """pywebview 6.2 sets WinForms.Form.Icon before the native window is shown."""
+    icon_path = icon_path_for(resource_root)
+    set_windows_app_identity()
+    webview.create_window(
+        "予備品管理システム", url, width=1320, height=850, min_size=(900, 620)
+    )
+    webview.start(gui="edgechromium", icon=str(icon_path))
 
 
 def main():
@@ -105,13 +107,7 @@ def main():
         raise RuntimeError("ローカルサーバーを起動できませんでした")
 
     try:
-        window = webview.create_window(
-            "予備品管理システム", url, width=1320, height=850, min_size=(900, 620)
-        )
-        window.events.shown += lambda: set_windows_window_icon(
-            Path(os.environ["SPARES_RESOURCE_DIR"]) / "assets" / "spare_parts.ico"
-        )
-        webview.start(gui="edgechromium")
+        show_desktop(webview, url, Path(os.environ["SPARES_RESOURCE_DIR"]))
     finally:
         server.close()
         if instance_lock is not None:

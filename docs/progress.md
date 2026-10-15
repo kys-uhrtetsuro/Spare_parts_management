@@ -89,6 +89,14 @@
 - [検証待ち] Windowsビルドと配布ZIPのGit登録、Windows実機起動
 - [保留] mainマージはCI成功とWindows実機確認後
 
+## タスクバーアイコン修正
+- [修正] pywebview 6.2 標準の `start(icon=...)` を利用し、Windows WinForms生成時にICOを設定
+- [修正] 起動後の `WM_SETICON` とウィンドウタイトルによる曖昧なハンドル探索を削除
+- [修正] 起動前に固定AppUserModelIDを設定し、タスクバーグループのアプリ識別子を統一
+- [検証] GUI生成引数とICO欠落検出をPython単体テスト、Windows EXEのアイコンリソースをビルド後にチェック
+- [保留] 最新のWindows配布ZIPの成功確認とユーザー端末でのタスクバー表示を確認
+- [参考] 旧版をピン留め済みならタスクバーから解除して更新版を再登録する場合あり
+
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

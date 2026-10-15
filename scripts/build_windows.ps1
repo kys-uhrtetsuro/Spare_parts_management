@@ -36,4 +36,8 @@ $argsList = @(
 $env:PYTHONPATH = (Resolve-Path "backend").Path
 python @argsList
 if ($LASTEXITCODE -ne 0) { throw "Nuitka build failed" }
+if (-not $Onefile) {
+    python scripts/verify_windows_icon.py "build/launcher.dist/SparePartsManagement.exe"
+    if ($LASTEXITCODE -ne 0) { throw "Windows icon verification failed" }
+}
 Write-Host "Nuitka compilation completed. Keep the data directory when upgrading."
