@@ -83,10 +83,60 @@ jobs:
           key: nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-
-      - name: Nuitka standaloneとC製ランチャーをビルド
+      - name: Nuitka standaloneとC製ランチャーをビルド（Cコンパイル率表示）
         id: nuitka-build
         shell: pwsh
-        run: ./scripts/build_windows.ps1
+        run: |
+          # Nuitka/tqdm disables interactive progress bars on non-TTY runners.
+          # Count C translation units and their compiled objects instead.
+          # Changes only the Actions wrapper, not Nuitka's build parameters.
+          $ErrorActionPreference = 'Stop'
+          $buildJob = Start-ThreadJob -ArgumentList (Get-Location).Path -ScriptBlock {
+            param($repoRoot)
+            Set-Location $repoRoot
+            & ./scripts/build_windows.ps1
+          }
+          $lastMessage = ''
+          $lastReport = [DateTime]::MinValue
+          $sourceCount = 0
+          $compiledCount = 0
+          try {
+            while ($buildJob.State -in @('Running', 'NotStarted')) {
+              # Pass through Nuitka's original output, including compiler errors.
+              Receive-Job -Job $buildJob -ErrorAction Continue | Out-Host
+              $buildDir = 'build/launcher.build'
+              $message = '[Cコンパイル] Cソース生成・コンパイル開始待ち'
+              if (Test-Path -LiteralPath $buildDir -PathType Container) {
+                $sourceCount = @(Get-ChildItem -LiteralPath $buildDir -Recurse -File -Filter '*.c' -ErrorAction SilentlyContinue).Count
+                $compiledCount = @(Get-ChildItem -LiteralPath $buildDir -Recurse -File -Filter '*.obj' -ErrorAction SilentlyContinue).Count
+                if ($sourceCount -gt 0) {
+                  $done = [Math]::Min($compiledCount, $sourceCount)
+                  $percent = [Math]::Round(100.0 * $done / $sourceCount, 1)
+                  $message = "[Cコンパイル概算] $percent% ($done/$sourceCount CファイルのOBJを生成済み)"
+                  if ($done -eq $sourceCount) {
+                    $message += ' - Cコンパイル完了、リンク・配布処理は別'
+                  }
+                }
+              }
+              # Avoid spamming Actions logs; always emit a heartbeat within a minute.
+              if ($message -ne $lastMessage -or ((Get-Date) - $lastReport).TotalSeconds -ge 60) {
+                Write-Host $message
+                $lastMessage = $message
+                $lastReport = Get-Date
+              }
+              Start-Sleep -Seconds 15
+            }
+            Receive-Job -Job $buildJob -ErrorAction Continue | Out-Host
+            if ($buildJob.State -ne 'Completed') {
+              throw "Nuitkaビルドに失敗しました: $($buildJob.State)"
+            }
+            Write-Host 'Nuitka standaloneとC製ランチャーのビルド成功'
+          } finally {
+            if ($buildJob.State -in @('Running', 'NotStarted')) {
+              Stop-Job -Job $buildJob
+            }
+            Remove-Job -Job $buildJob -Force
+          }
       - name: Nuitkaコンパイルキャッシュを保存
         if: ${{ steps.nuitka-build.outcome == 'success' }}
         uses: actions/cache/save@v4

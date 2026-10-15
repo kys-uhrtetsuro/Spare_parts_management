@@ -202,3 +202,10 @@ Nexusとは独立したプロジェクトとして管理する。
 - Standalone配布ビルド元: 9d55e481f82cfdb6507429916266576a567081a9
 - Standalone配布ZIP: 64260119 bytes（Git制限超過時はGitHub Releases）
 
+
+## Windows Cコンパイル進捗の表示（2026-10-15）
+- [実装] Windows GitHub ActionsでNuitka standaloneビルドの実行中に生成Cファイル数とOBJファイル数を15秒おきに監視し、コンパイル工程内の進捗率（概算）をログ表示
+- [維持] Nuitkaのコンパイル設定、キャッシュキー、配布成果物、Python 3.12とrequirements.txtは変更しない
+- [維持] Windowsビルド完了時の既存ZIP（約64.3MB）は再生成しない。フロー変更のみではWindowsビルドを自動起動しない設定を維持
+- [検証待ち] 次回WindowsビルドでOBJ数/生成Cファイル数の表示を確認。リンク・ZIP作成処理は表示対象外
+- [確認] 修正開始時点で実行中のWindowsビルドなし。直近のRelease Windowsビルド #38714119795 は成功済み
