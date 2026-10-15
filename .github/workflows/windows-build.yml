@@ -57,7 +57,7 @@ jobs:
   build:
     needs: stop-outdated
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       # Nuitka writes ccache/clcache and its other compilation caches here.
       # GitHub runners are ephemeral; restore/save makes the directory persistent.
@@ -83,10 +83,10 @@ jobs:
           key: nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-
-      - name: standalone EXEビルド
+      - name: Onefile・Standalone両方をビルド
         id: nuitka-build
         shell: pwsh
-        run: ./scripts/build_windows.ps1
+        run: ./scripts/build_windows.ps1 -Both
       - name: Nuitkaコンパイルキャッシュを保存
         if: ${{ steps.nuitka-build.outcome == 'success' }}
         uses: actions/cache/save@v4
@@ -99,7 +99,13 @@ jobs:
           name: SparePartsManagement-onefile
           path: build/SparePartsManagement.exe
           if-no-files-found: error
-      - name: Onefile EXEをReleaseへ配布登録
+      - name: Standalone成果物を保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: SparePartsManagement-standalone
+          path: build/launcher.dist/
+          if-no-files-found: error
+      - name: 両方式をreleasesへ配布登録
         if: ${{ github.ref == 'refs/heads/Release' }}
         shell: pwsh
         env:
@@ -107,8 +113,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $exePath = 'build/SparePartsManagement.exe'
+          $standalonePath = 'build/launcher.dist/SparePartsManagement.exe'
           if (-not (Test-Path $exePath -PathType Leaf)) { throw 'Onefile EXEがありません' }
+          if (-not (Test-Path $standalonePath -PathType Leaf)) { throw 'Standalone EXEがありません' }
           New-Item -ItemType Directory -Force -Path releases | Out-Null
+          $standaloneZip = 'releases/SparePartsManagement-standalone.zip'
+          Compress-Archive -Path 'build/launcher.dist/*' -DestinationPath $standaloneZip -CompressionLevel Optimal -Force
+
           git fetch origin $env:GITHUB_REF_NAME
           $remoteHead = (git rev-parse FETCH_HEAD).Trim()
           $localHead = (git rev-parse HEAD).Trim()
@@ -116,41 +127,49 @@ jobs:
             $changedPaths = @(git diff --name-only $localHead $remoteHead)
             $codeChanges = @($changedPaths | Where-Object { $_ -notin @('docs/progress.md', 'README.md') })
             if ($codeChanges.Count -gt 0) {
-              Write-Host 'ソースが更新されているので、旧版EXEは登録しません'
+              Write-Host 'ソースが更新されているので、旧版成果物は登録しません'
               exit 0
             }
             git merge --ff-only FETCH_HEAD
             if ($LASTEXITCODE -ne 0) { throw '進捗文書の更新を取り込めませんでした' }
           }
-          $exeSize = (Get-Item $exePath).Length
+
+          $onefileSize = (Get-Item $exePath).Length
+          $standaloneSize = (Get-Item $standaloneZip).Length
+          $buildTag = "windows-$($localHead.Substring(0,12))"
           $gitThreshold = 90MB
-          $buildTag = "onefile-$($localHead.Substring(0,12))"
-          if ($exeSize -gt $gitThreshold) {
-            Write-Host "EXEは $exeSize bytes。Git単一ファイル制限を避け、GitHub Releaseに公開します"
-            gh release create $buildTag "$exePath#SparePartsManagement.exe" --target $localHead --title "Onefile $($localHead.Substring(0,12))" --notes "SQLiteはEXEの隣のdata/inventory.sqlite3に保存されます。"
-            if ($LASTEXITCODE -ne 0) { throw 'GitHub Release配布失敗' }
+          $useReleaseAssets = ($onefileSize -gt $gitThreshold) -or ($standaloneSize -gt $gitThreshold)
+          if ($useReleaseAssets) {
+            # Keep both files together if either exceeds Git's per-blob limit.
+            gh release create $buildTag "$exePath#SparePartsManagement.exe" "$standaloneZip#SparePartsManagement-standalone.zip" --target $localHead --title "Windows配布 $($localHead.Substring(0,12))" --notes "Onefile単体EXEとStandalone ZIPの両方を収録。SQLiteはEXEの隣のdata/inventory.sqlite3に保存します。"
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub Releasesへの成果物登録に失敗しました' }
           } else {
             Copy-Item $exePath 'releases/SparePartsManagement.exe' -Force
           }
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           $progressPath = 'docs/progress.md'
           $progress = Get-Content $progressPath -Raw -Encoding UTF8
-          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows onefile: ビルド成功、SQLiteはEXE横のdata/inventory.sqlite3、GUI実機確認は未完了'
-          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | Onefileビルド成功 | EXE配布成果物作成済み | 実機起動未確認 |'
+          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows Onefile・Standalone: 両方式をビルドして配布登録済み。Windows実機GUIは未確認'
+          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | 両方式ビルド成功 | EXEとStandalone ZIPを配布済み | Windows実機GUI未確認 |'
           $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\r?\n', ''
+          $progress = $progress -replace '(?m)^- Onefile成果物:.*\r?\n', ''
           $progress += "`n- 配布成果物ビルド元: $localHead`n"
-          $progress += "- Onefile成果物: $buildTag / $exeSize bytes（Git制限超過時はGitHub Releases）`n"
+          $progress += "- 配布成果物: Onefile EXE $onefileSize bytes、Standalone ZIP $standaloneSize bytes（Git制限超過時はGitHub Releases）`n"
           Set-Content -Path $progressPath -Value $progress -Encoding UTF8
           git add docs/progress.md assets/spare_parts.ico frontend/src/assets/spare_parts.png
-          if ($exeSize -le $gitThreshold) { git add -f releases/SparePartsManagement.exe }
-          git rm -f --ignore-unmatch releases/SparePartsManagement-standalone.zip
+          if ($useReleaseAssets) {
+            git rm -f --ignore-unmatch releases/SparePartsManagement.exe releases/SparePartsManagement-standalone.zip
+          } else {
+            git add -f releases/SparePartsManagement.exe releases/SparePartsManagement-standalone.zip
+          }
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) {
-            Write-Host '追加成果物はありません'
+            Write-Host '配布成果物に変更はありません'
             exit 0
           }
-          git commit -m 'Windows Onefile配布用EXE成果物を更新'
+          git commit -m 'Windows OnefileとStandaloneの配布成果物を更新'
           if ($LASTEXITCODE -ne 0) { throw 'コミットに失敗しました' }
           git push origin HEAD:$env:GITHUB_REF_NAME
           if ($LASTEXITCODE -ne 0) { throw '配布物のプッシュに失敗しました' }

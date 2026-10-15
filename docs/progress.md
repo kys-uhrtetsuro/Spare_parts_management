@@ -140,7 +140,7 @@
 - [検証] 一時展開フォルダと永続DBフォルダのパスが別であること、既存DBが消えないことを単体テスト追加
 - [検証] Onefile EXEのWindowsアイコンリソースをビルド後に確認する
 - [実装] Actions成果物は単体EXE、Gitへ格納可能ならGitコミット。大きい場合はGitHub Releases資産として配布
-- [実装] 旧standalone ZIPは新しい成果物登録時に配布フォルダから削除する
+- [更新] 配布を二方式併用に変更し、Onefile EXEとStandalone ZIPを共存させる
 - [検証待ち] Windows実機Onefile起動、初回DB作成、EXE差替後のDB保持
 
 ## 起動不具合の最小診断修正（2026-10-15）
@@ -156,6 +156,14 @@
 - [実装] 旧`.django-secret`があれば秘密鍵をSQLiteへ移植し、保存完了後に旧ファイルを整理
 - [維持] `data/startup.log`（診断ログ）と`.instance.lock`（起動ロック）は補助ファイルとして自動生成。既存のDB・データは変更しない
 - [検証待ち] 統合後のWindows Onefile実機動作、既存DB・秘密鍵の維持
+
+## Windows二方式配布とDjango日本語リソース修正（2026-10-15）
+- [修正] GitHub ActionsでOnefile EXEとStandaloneフォルダを同一ソースから連続ビルド、共通のPython/npm導入・Nuitkaコンパイルキャッシュを使用
+- [修正] `releases/SparePartsManagement.exe` と `releases/SparePartsManagement-standalone.zip` を両方保存。GitHubの単一ファイル制限超過時は両方をGitHub Releases資産として保存
+- [修正] 以前確認されたDjango初期化エラー「No translation files found for default language ja」に対処し、Nuitkaへ日本語翻訳リソースを明示同梱
+- [検証] Standalone成果物内に`django/conf/locale/ja/LC_MESSAGES/django.mo`が存在することをビルド時に検証
+- [維持] SQLite外部保存先 `data/inventory.sqlite3`、`data/startup.log`、既存マイグレーションと秘密鍵の移行仕様は変更しない
+- [確認待ち] 両方式のWindowsビルド成功、利用者端末での起動・GUI表示・セキュリティ製品の検知状況
 
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
