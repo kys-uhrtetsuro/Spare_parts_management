@@ -14,11 +14,15 @@ class SystemMaster(models.Model):
 
 
 class EquipmentMaster(models.Model):
-    name = models.CharField("機器名", max_length=160, unique=True)
+    system = models.ForeignKey(SystemMaster, on_delete=models.PROTECT, related_name="equipment")
+    name = models.CharField("機器名", max_length=160)
     alias = models.CharField("機器通称", max_length=160, blank=True)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["system_id", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["system", "name"], name="unique_equipment_per_system"),
+        ]
 
 
 class EquipmentSection(models.Model):
@@ -46,12 +50,6 @@ class PartMaster(models.Model):
     previous_part = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="successors"
     )
-    equipment = models.ForeignKey(
-        EquipmentMaster, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
-    )
-    section = models.ForeignKey(
-        EquipmentSection, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
-    )
     category = models.ForeignKey(
         PartCategory, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
     )
@@ -65,6 +63,19 @@ class PartMaster(models.Model):
 
     def __str__(self):
         return f"{self.part_number} / {self.model_number}"
+
+
+class SystemPartPlacement(models.Model):
+    """Attach a shared part to equipment separately for each system."""
+    system = models.ForeignKey(SystemMaster, on_delete=models.PROTECT, related_name="part_placements")
+    part = models.ForeignKey(PartMaster, on_delete=models.PROTECT, related_name="placements")
+    equipment = models.ForeignKey(EquipmentMaster, on_delete=models.PROTECT)
+    section = models.ForeignKey(EquipmentSection, on_delete=models.PROTECT, null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["system", "part"], name="unique_part_placement_per_system"),
+        ]
 
 
 class PartVersion(models.Model):

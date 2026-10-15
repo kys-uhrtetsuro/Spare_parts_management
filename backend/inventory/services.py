@@ -6,7 +6,7 @@ from threading import RLock
 from django.db import IntegrityError, transaction
 from django.db.models import Case, F, IntegerField, Max, Sum, When
 
-from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster, SystemPartPlacement
 
 # This GUI operates one Django server per database. Serialize writes within the process.
 WRITE_LOCK = RLock()
@@ -190,48 +190,80 @@ def optional_fk(model, value, label):
 
 
 def part_assignments(data, original=None):
-    # Existing assignments remain intact if a legacy caller omits the keys.
-    equipment_id = optional_fk(
-        EquipmentMaster,
-        data.get("equipment_id", original.equipment_id if original else None), "機器"
-    )
-    section_id = optional_fk(
-        EquipmentSection,
-        data.get("section_id", original.section_id if original else None), "部位"
-    )
+    """Part category is global; machine/section assignments are system-scoped."""
     category_id = optional_fk(
         PartCategory,
         data.get("category_id", original.category_id if original else None), "分類"
     )
+    system_id = optional_fk(SystemMaster, data.get("system_id"), "システム")
+    equipment_id = optional_fk(EquipmentMaster, data.get("equipment_id"), "機器")
+    section_id = optional_fk(EquipmentSection, data.get("section_id"), "部位")
+    if equipment_id is not None and (
+        system_id is None or not EquipmentMaster.objects.filter(
+            pk=equipment_id, system_id=system_id
+        ).exists()
+    ):
+        raise InputError("機器は選択したシステムに属している必要があります")
     if section_id is not None and (
         equipment_id is None or not EquipmentSection.objects.filter(
             pk=section_id, equipment_id=equipment_id
         ).exists()
     ):
         raise InputError("部位と機器の組み合わせが一致していません")
-    return {"equipment_id": equipment_id, "section_id": section_id, "category_id": category_id}
+    return category_id, system_id, equipment_id, section_id
+
+
+def save_placement(part, system_id, equipment_id, section_id):
+    if system_id is None:
+        return
+    if equipment_id is None:
+        SystemPartPlacement.objects.filter(part=part, system_id=system_id).delete()
+    else:
+        SystemPartPlacement.objects.update_or_create(
+            part=part, system_id=system_id,
+            defaults={"equipment_id": equipment_id, "section_id": section_id},
+        )
+
+
+def create_part(data):
+    number = text_field(data.get("part_number"), "品番", 160)
+    model = text_field(data.get("model_number"), "型式", 160)
+    name = text_field(data.get("name"), "品名", 250)
+    category_id, system_id, equipment_id, section_id = part_assignments(data)
+    with WRITE_LOCK, transaction.atomic():
+        result = PartMaster.objects.create(
+            part_number=number, model_number=model, name=name, category_id=category_id
+        )
+        save_placement(result, system_id, equipment_id, section_id)
+    return result
 
 
 def change_part(part, data):
     new_number = text_field(data.get("part_number"), "品番", 160)
     new_model = text_field(data.get("model_number"), "型式", 160)
     new_name = text_field(data.get("name"), "品名", 250)
-    attributes = part_assignments(data, part)
+    category_id, system_id, equipment_id, section_id = part_assignments(data, part)
     with WRITE_LOCK, transaction.atomic():
         if (part.part_number, part.model_number) == (new_number, new_model):
-            # Name/assignment edits do not change the identifier or stock history.
             part.name = new_name
-            for field, value in attributes.items():
-                setattr(part, field, value)
+            part.category_id = category_id
             part.save()
+            if system_id is not None:
+                save_placement(part, system_id, equipment_id, section_id)
             return part
 
-        # Upgrading an identifier creates a separate PartMaster. Never mutate the
-        # identifier attached to stock already registered under the old version.
         successor = PartMaster.objects.create(
             part_number=new_number, model_number=new_model, name=new_name,
-            previous_part=part, **attributes,
+            category_id=category_id, previous_part=part,
         )
+        SystemPartPlacement.objects.bulk_create([
+            SystemPartPlacement(
+                system_id=p.system_id, part=successor, equipment_id=p.equipment_id,
+                section_id=p.section_id,
+            ) for p in SystemPartPlacement.objects.filter(part=part)
+        ])
+        if system_id is not None:
+            save_placement(successor, system_id, equipment_id, section_id)
         PartVersion.objects.create(
             part=part, old_part_number=part.part_number, old_model_number=part.model_number,
             new_part_number=successor.part_number, new_model_number=successor.model_number,
