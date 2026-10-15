@@ -3,11 +3,15 @@ name: Windows Nuitkaビルド
 on:
   workflow_dispatch:
   push:
+    branches: [feature/initial-implementation]
     tags:
       - "v*"
+    paths-ignore:
+      - "releases/**"
+      - "docs/progress.md"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -32,3 +36,29 @@ jobs:
           name: SparePartsManagement-standalone
           path: build/launcher.dist/
           if-no-files-found: error
+      - name: 配布用ZIPをGitへコミット
+        if: ${{ github.ref == 'refs/heads/feature/initial-implementation' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path releases | Out-Null
+          Compress-Archive -Path 'build/launcher.dist/*' -DestinationPath 'releases/SparePartsManagement-standalone.zip' -CompressionLevel Optimal -Force
+          git fetch origin $env:GITHUB_REF_NAME
+          $remoteHead = (git rev-parse FETCH_HEAD).Trim()
+          $localHead = (git rev-parse HEAD).Trim()
+          if ($remoteHead -ne $localHead) {
+            Write-Host 'より新しいコミットがあるため、古い成果物の登録を省略します'
+            exit 0
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add releases/SparePartsManagement-standalone.zip
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host '成果物に変更はありません'
+            exit 0
+          }
+          git commit -m 'Windows配布用EXE成果物を更新'
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
+          git push origin HEAD:$env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'Push failed' }

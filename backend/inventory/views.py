@@ -58,7 +58,7 @@ def serialize_history(m, corrected_ids):
         "part_id": m.part_id, "part_number": m.part_number_snapshot,
         "model_number": m.model_number_snapshot, "name": m.part.name,
         "direction": m.direction, "quantity": m.quantity,
-        "company": m.company, "operator": m.operator, "note": m.note,
+        "operator": m.operator, "note": m.note,
         "reversal_of": m.reversal_of_id, "corrected": m.id in corrected_ids,
         "created_at": m.created_at.isoformat(),
     }

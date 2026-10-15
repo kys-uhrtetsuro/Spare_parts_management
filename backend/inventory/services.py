@@ -112,7 +112,6 @@ def create_movement(data):
     if direction not in (StockHistory.IN, StockHistory.OUT):
         raise InputError("区分は補充または使用を指定してください")
     quantity = positive_int(data.get("quantity"))
-    company = text_field(data.get("company"), "企業名", 160)
     operator = text_field(data.get("operator"), "登録者名", 160)
     note = text_field(data.get("note", ""), "備考", 400, required=False)
     with WRITE_LOCK, transaction.atomic():
@@ -120,7 +119,7 @@ def create_movement(data):
             raise InputError("在庫が不足しています。マイナス在庫になる登録はできません")
         obj = StockHistory.objects.create(
             system=system, part=part, direction=direction, quantity=quantity,
-            company=company, operator=operator, note=note,
+            operator=operator, note=note,
             part_number_snapshot=part.part_number, model_number_snapshot=part.model_number,
         )
     return obj
@@ -139,7 +138,6 @@ def correct_movement(history_id, data):
     if direction not in (StockHistory.IN, StockHistory.OUT):
         raise InputError("訂正区分が不正です")
     quantity = positive_int(data.get("quantity"))
-    company = text_field(data.get("company"), "企業名", 160)
     operator = text_field(data.get("operator"), "登録者名", 160)
     note = text_field(data.get("note", ""), "訂正理由", 400)
     with WRITE_LOCK, transaction.atomic():
@@ -153,7 +151,7 @@ def correct_movement(history_id, data):
         reverse = StockHistory.objects.create(
             system=original.system, part=original.part,
             direction=StockHistory.OUT if original.direction == StockHistory.IN else StockHistory.IN,
-            quantity=original.quantity, company=company, operator=operator,
+            quantity=original.quantity, operator=operator,
             note=f"履歴#{original.pk}取消: {note}"[:400],
             part_number_snapshot=original.part_number_snapshot,
             model_number_snapshot=original.model_number_snapshot,
@@ -161,7 +159,7 @@ def correct_movement(history_id, data):
         )
         revised = StockHistory.objects.create(
             system=original.system, part=original.part,
-            direction=direction, quantity=quantity, company=company, operator=operator,
+            direction=direction, quantity=quantity, operator=operator,
             note=f"履歴#{original.pk}訂正: {note}"[:400],
             part_number_snapshot=original.part.part_number,
             model_number_snapshot=original.part.model_number,

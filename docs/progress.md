@@ -15,7 +15,7 @@
 | 下限アラート一括設定 | 実装 | Django CI成功 | 未確認 |
 | 在庫一覧・Excel出力 | 実装 | Django CI成功 | 未確認 |
 | React / pywebview GUI | 実装 | Reactビルド・Playwright成功 | 未確認 |
-| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actionsビルド実行中 | 未確認 |
+| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | 旧版のstandaloneビルド成功、修正版のビルド・Git成果物登録は検証待ち | 未確認 |
 | DBバックアップ | 実装 | 実機未確認 | 未確認 |
 
 ## CI検証結果
@@ -23,7 +23,15 @@
 - React: TypeScript/Viteビルド成功
 - Django配信: ビルド済みReact index検証成功
 - Playwright: マスタ作成→補充→下限設定→ExcelダウンロードのE2E成功
-- Windows standalone: 実行環境でのコンパイルとWebView2実機確認は未完了
+- Windows standalone: 旧版のコンパイルは成功。今回変更後のEXE生成とWebView2実機確認は未完了
+
+## 追加要件（今回対応）
+- 履歴登録・訂正から企業名を廃止。既存DBは0002マイグレーションで列を削除
+- 部品の直接入力時に一意の品番／品番＋型式で完全一致すれば選択を確定
+- 候補補完に加え、検索可能な「一覧から選択」モーダルを追加
+- システム画面の余分な住所説明とローカル運用バッジを撤去
+- Windowsビルド成功後のZIPはreleases/にコミット（CIを再帰起動しない）
+- 配布用ZIPのCI結果・実行端末での動作確認は別管理
 
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功

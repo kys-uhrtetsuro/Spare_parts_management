@@ -3,13 +3,13 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 type System = { id: number; name: string }
 type Part = { id: number; part_number: string; model_number: string; name: string }
 type Stock = { system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; quantity: number; threshold: number | null; alert: boolean }
-type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; company: string; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
+type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
 type Alert = { part_id: number; threshold: number }
 type Version = { id: number; old_part_number: string; old_model_number: string; new_part_number: string; new_model_number: string; changed_at: string }
 type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems'
 type PartForm = { part_number: string; model_number: string; name: string }
 type Editor = { mode: 'create' | 'edit'; partId?: number; values: PartForm }
-type MovementForm = { direction: 'IN' | 'OUT'; quantity: string; company: string; operator: string; note: string }
+type MovementForm = { direction: 'IN' | 'OUT'; quantity: string; operator: string; note: string }
 const emptyPart: PartForm = { part_number: '', model_number: '', name: '' }
 
 function token() {
@@ -67,9 +67,10 @@ export default function App() {
   const [correcting, setCorrecting] = useState<History | null>(null)
   const [partSearch, setPartSearch] = useState('')
   const [pickedPart, setPickedPart] = useState<Part | null>(null)
-  const [lastCompany, setLastCompany] = useStoredValue('last-company')
+  const [partPicker, setPartPicker] = useState(false)
+  const [pickerQuery, setPickerQuery] = useState('')
   const [lastOperator, setLastOperator] = useStoredValue('last-operator')
-  const [movement, setMovement] = useState<MovementForm>({ direction: 'IN', quantity: '1', company: '', operator: '', note: '' })
+  const [movement, setMovement] = useState<MovementForm>({ direction: 'IN', quantity: '1', operator: '', note: '' })
   const [alertDraft, setAlertDraft] = useState<Record<number, string>>({})
 
   const load = useCallback(async () => {
@@ -106,15 +107,30 @@ export default function App() {
   const candidates = parts.filter(x =>
     [x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(partSearch.toLowerCase()))
   ).slice(0, 12)
+  // Exactly matching unique part identifiers can be entered directly.
+  // Ambiguous numbers must be selected from the candidates or the list.
+  const exactMatches = parts.filter(p => {
+    const input = partSearch.trim().toLocaleLowerCase()
+    return Boolean(input) && (
+      p.part_number.toLocaleLowerCase() === input ||
+      `${p.part_number} / ${p.model_number}`.toLocaleLowerCase() === input
+    )
+  })
+  const chosenPart = pickedPart ?? (exactMatches.length === 1 ? exactMatches[0] : null)
+  const choosePart = (part: Part) => {
+    setPickedPart(part)
+    setPartSearch(label(part))
+    setPartPicker(false)
+  }
   const criticalCount = stocks.filter(x => x.alert).length
   const submitMovement = async () => {
-    if (!selected || !pickedPart) { setError('システムと部品を選択してください'); return }
+    if (!selected || !chosenPart) { setError('システムと部品を選択してください'); return }
     const success = await act(() => api('history', 'POST', {
-      system_id: Number(selected), part_id: pickedPart.id,
+      system_id: Number(selected), part_id: chosenPart.id,
       direction: movement.direction, quantity: Number(movement.quantity),
-      company: movement.company, operator: movement.operator, note: movement.note,
+      operator: movement.operator, note: movement.note,
     }), '入出庫を記録しました')
-    if (success) { setLastCompany(movement.company); setLastOperator(movement.operator); setMovementModal(false) }
+    if (success) { setLastOperator(movement.operator); setMovementModal(false) }
   }
   const submitPart = async () => {
     if (!editor) return
@@ -136,7 +152,7 @@ export default function App() {
     if (!correcting) return
     const success = await act(() => api('history/' + correcting.id + '/correct', 'POST', {
       direction: movement.direction, quantity: Number(movement.quantity),
-      company: movement.company, operator: movement.operator, note: movement.note,
+      operator: movement.operator, note: movement.note,
     }), '取消・訂正履歴を記録しました')
     if (success) setCorrecting(null)
   }
@@ -151,11 +167,11 @@ export default function App() {
     if (success) setAlerts(items)
   }
   const openMovement = () => {
-    setPickedPart(null); setPartSearch(''); setMovement({ direction: 'IN', quantity: '1', company: lastCompany, operator: lastOperator, note: '' })
+    setPickedPart(null); setPartSearch(''); setPartPicker(false); setMovement({ direction: 'IN', quantity: '1', operator: lastOperator, note: '' })
     setMovementModal(true)
   }
   const openCorrection = (h: History) => {
-    setMovement({ direction: h.direction, quantity: String(h.quantity), company: lastCompany || h.company, operator: lastOperator || h.operator, note: '' })
+    setMovement({ direction: h.direction, quantity: String(h.quantity), operator: lastOperator || h.operator, note: '' })
     setCorrecting(h)
   }
   const openEditor = async (part: Part) => {
@@ -180,7 +196,7 @@ export default function App() {
     <main className="main">
       <div className="topbar">
         <div><span className="eyebrow">INVENTORY CONTROL</span><h1>{views.find(v => v.id === tab)?.label}</h1></div>
-        <span className="local-pill">● ローカル運用</span>
+        
       </div>
       <div className="toolbar">
         {needSystem && <label className="field compact">対象システム
@@ -197,7 +213,7 @@ export default function App() {
           </>}
           {tab === 'history' && <button className="button primary" disabled={!selected} onClick={openMovement}>＋ 入出庫を登録</button>}
           {tab === 'parts' && <button className="button primary" onClick={() => { setVersions([]); setEditor({ mode: 'create', values: { ...emptyPart } }) }}>＋ 部品を追加</button>}
-          {tab === 'systems' && <button className="button primary" onClick={() => setSystemModal({ name: '' })}>＋ システムを追加</button>}
+          {tab === 'systems' && <button className="button primary" onClick={() => setSystemModal({ name: '' })}>＋ 新規システム名称を登録</button>}
           {tab === 'alerts' && <button className="button primary" disabled={!selected || busy} onClick={submitAlerts}>変更を一括保存</button>}
         </div>
       </div>
@@ -216,15 +232,15 @@ export default function App() {
         </section>
       </>}
       {tab === 'history' && <section className="panel"><div className="panel-head"><h2>記録履歴</h2><span className="help">最新500件 / 訂正時は元履歴を保持</span></div>
-        <div className="table-wrap"><table><thead><tr><th>日時</th><th>システム</th><th>品番 / 型式</th><th>区分</th><th className="right">数量</th><th>企業 / 登録者</th><th>備考</th><th></th></tr></thead>
-          <tbody>{history.map(h => <tr key={h.id}><td className="nowrap">{dateTime(h.created_at)}</td><td>{h.system}</td><td>{h.part_number}<br/><small>{h.model_number}</small></td><td><span className={'chip ' + (h.direction === 'IN' ? 'ok' : 'neutral')}>{h.direction === 'IN' ? '補充' : '使用'}</span></td><td className="right quantity">{h.direction === 'IN' ? '+' : '−'}{h.quantity}</td><td>{h.company}<br/><small>{h.operator}</small></td><td>{h.note}{h.reversal_of && <small> (取消レコード)</small>}</td><td>{!h.corrected && !h.reversal_of && <button className="button tiny secondary" onClick={() => openCorrection(h)}>訂正</button>}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table><thead><tr><th>日時</th><th>システム</th><th>品番 / 型式</th><th>区分</th><th className="right">数量</th><th>登録者</th><th>備考</th><th></th></tr></thead>
+          <tbody>{history.map(h => <tr key={h.id}><td className="nowrap">{dateTime(h.created_at)}</td><td>{h.system}</td><td>{h.part_number}<br/><small>{h.model_number}</small></td><td><span className={'chip ' + (h.direction === 'IN' ? 'ok' : 'neutral')}>{h.direction === 'IN' ? '補充' : '使用'}</span></td><td className="right quantity">{h.direction === 'IN' ? '+' : '−'}{h.quantity}</td><td>{h.operator}</td><td>{h.note}{h.reversal_of && <small> (取消レコード)</small>}</td><td>{!h.corrected && !h.reversal_of && <button className="button tiny secondary" onClick={() => openCorrection(h)}>訂正</button>}</td></tr>)}</tbody></table></div>
         {!history.length && <p className="empty">まだ入出庫履歴がありません。</p>}
       </section>}
       {tab === 'parts' && <section className="panel"><div className="panel-head"><h2>部品マスタ</h2><span className="help">品番と型式の組み合わせは一意</span></div>
         <div className="table-wrap"><table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>操作</th></tr></thead><tbody>{filteredParts.map(p => <tr key={p.id}><td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td><td><button className="button tiny secondary" onClick={() => openEditor(p)}>変更・引継ぎ</button></td></tr>)}</tbody></table></div>
         {!filteredParts.length && <p className="empty">登録部品がありません。</p>}
       </section>}
-      {tab === 'systems' && <section className="panel"><div className="panel-head"><h2>登録システム</h2><span className="help">現場・住所の登録は不要</span></div>
+      {tab === 'systems' && <section className="panel"><div className="panel-head"><h2>登録システム</h2><span className="help"></span></div>
         <div className="system-grid">{systems.map(s => <div className="system-card" key={s.id}><strong>{s.name}</strong><button className="button tiny secondary" onClick={() => setSystemModal({ id: s.id, name: s.name })}>名称変更</button></div>)}</div>
         {!systems.length && <p className="empty">最初にシステムを登録してください。</p>}
       </section>}
@@ -251,16 +267,33 @@ export default function App() {
       <div className="form-grid">
         <label className="field">システム<input disabled value={systems.find(s => String(s.id) === selected)?.name ?? ''} /></label>
         <label className="field">区分<select value={movement.direction} onChange={e => setMovement(p => ({ ...p, direction: e.target.value as 'IN' | 'OUT' }))}><option value="IN">補充</option><option value="OUT">使用</option></select></label>
-        <div className="field wide">部品の検索・選択（品番・型式・品名）<input autoFocus value={partSearch} onChange={e => { setPartSearch(e.target.value); setPickedPart(null) }} placeholder="入力すると候補を絞り込みます" />
-          {pickedPart ? <p className="selected-part">選択中：{label(pickedPart)}</p> : <div className="suggestions">{candidates.map(p => <button key={p.id} onClick={() => { setPickedPart(p); setPartSearch(label(p)) }}>{label(p)}</button>)}<button className="create-suggestion" onClick={openNewPart}>＋ 未登録品を新規登録する</button></div>}
+        <div className="field wide">部品の検索・選択（品番・型式・品名）
+          <div className="part-search-row">
+            <input autoFocus aria-label="部品を直接入力して検索" value={partSearch} onChange={e => { setPartSearch(e.target.value); setPickedPart(null) }} placeholder="品番を直接入力、または候補から選択" />
+            <button className="button secondary" onClick={() => { setPickerQuery(''); setPartPicker(true) }}>一覧から選択</button>
+          </div>
+          {chosenPart ? <p className="selected-part">選択中：{label(chosenPart)}{!pickedPart && '（完全一致）'}</p> : <div className="suggestions">{candidates.map(p => <button key={p.id} onClick={() => choosePart(p)}>{label(p)}</button>)}<button className="create-suggestion" onClick={openNewPart}>＋ 未登録品を新規登録する</button></div>}
         </div>
         <label className="field">数量<input type="number" min="1" step="1" value={movement.quantity} onChange={e => setMovement(p => ({ ...p, quantity: e.target.value }))} /></label>
-        <span />
-        <label className="field">企業名<input value={movement.company} onChange={e => setMovement(p => ({ ...p, company: e.target.value }))} /></label>
         <label className="field">登録者名<input value={movement.operator} onChange={e => setMovement(p => ({ ...p, operator: e.target.value }))} /></label>
         <label className="field wide">備考（任意）<input value={movement.note} onChange={e => setMovement(p => ({ ...p, note: e.target.value }))} /></label>
       </div>
-      <div className="dialog-actions"><button className="button secondary" onClick={() => setMovementModal(false)}>キャンセル</button><button className="button primary" disabled={busy || !pickedPart} onClick={submitMovement}>履歴を登録</button></div>
+      <div className="dialog-actions"><button className="button secondary" onClick={() => setMovementModal(false)}>キャンセル</button><button className="button primary" disabled={busy || !chosenPart} onClick={submitMovement}>履歴を登録</button></div>
+    </Modal>}
+    {movementModal && partPicker && <Modal title="部品一覧から選択" onClose={() => setPartPicker(false)}>
+      <label className="field">品番・型式・品名で絞り込み
+        <input autoFocus value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} placeholder="一覧から部品を検索" />
+      </label>
+      <div className="table-wrap part-picker-table">
+        <table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>選択</th></tr></thead>
+          <tbody>{parts.filter(p => label(p).toLocaleLowerCase().includes(pickerQuery.toLocaleLowerCase())).map(p =>
+            <tr key={p.id}><td>{p.part_number}</td><td>{p.model_number}</td><td>{p.name}</td>
+              <td><button className="button tiny secondary" onClick={() => choosePart(p)}>選択</button></td></tr>)}</tbody>
+        </table>
+      </div>
+      <div className="dialog-actions">
+        <button className="button secondary" onClick={() => setPartPicker(false)}>閉じる</button>
+      </div>
     </Modal>}
     {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : '新規部品マスタ登録'} onClose={() => setEditor(null)}>
       <p className="help">品番または型式を変更しても、部品ID・現在庫・入出庫履歴は引き継がれます。</p>
@@ -279,7 +312,6 @@ export default function App() {
       <div className="form-grid">
         <label className="field">訂正区分<select value={movement.direction} onChange={e => setMovement(p => ({ ...p, direction: e.target.value as 'IN' | 'OUT' }))}><option value="IN">補充</option><option value="OUT">使用</option></select></label>
         <label className="field">訂正数量<input type="number" min="1" step="1" value={movement.quantity} onChange={e => setMovement(p => ({ ...p, quantity: e.target.value }))} /></label>
-        <label className="field">企業名<input value={movement.company} onChange={e => setMovement(p => ({ ...p, company: e.target.value }))} /></label>
         <label className="field">登録者名<input value={movement.operator} onChange={e => setMovement(p => ({ ...p, operator: e.target.value }))} /></label>
         <label className="field wide">訂正理由（必須）<input value={movement.note} onChange={e => setMovement(p => ({ ...p, note: e.target.value }))} /></label>
       </div>

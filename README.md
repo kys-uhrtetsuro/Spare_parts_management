@@ -6,7 +6,7 @@ React + Django + SQLite + pywebview + Nuitka によるWindows用ローカル在�
 
 - システムマスタ（同一SQLiteに複数システム、親拠点や住所のDB管理は不要）
 - 品番・型式・品名の複合マスタとオートコンプリート、未登録品の明示登録
-- 補充/使用の履歴蓄積で現在庫を集計、マイナス在庫は禁止
+- 補充/使用の履歴蓄積で現在庫を集計、マイナス在庫は禁止。登録者名を保持し、企業名の入力は不要
 - 履歴訂正は取消逆仕訳＋新規履歴の追記（元履歴は変更せず保持）
 - 品番/型式/両方の変更と履歴引継ぎ（IDと現在庫は維持、変更履歴・履歴時点の値を保存）
 - Django Adminの選択画面を参考にした下限設定2列UI、設定値1以上、複数件一括保存
@@ -53,10 +53,12 @@ python backend/manage.py makemigrations --check --dry-run
 
 Windows向けNuitka standaloneビルドを作成。単体EXEの検証は
 \`./scripts/build_windows.ps1 -Onefile\` で実施（初回はstandalone推奨）。
-GitHub Actions の Windows Nuitkaビルドは手動で実行可能。
+GitHub Actions は開発ブランチ更新時に Windows Nuitkaビルドし、成功した配布ZIPを releases/SparePartsManagement-standalone.zip としてGitにコミットする（約数十MB）。
 ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1限定のWaitressで動作する。
 
 Nuitka と pywebview の既知互換性のため、pywebviewは6.2を採用している。
+
+部品は手入力（既存品番が一意に完全一致する場合）・候補補完・一覧モーダルで選択可能。未登録品は明示操作で新規登録する。
 
 ## 配布・バックアップ
 

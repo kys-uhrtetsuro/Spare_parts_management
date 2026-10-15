@@ -49,7 +49,6 @@ class StockHistory(models.Model):
     part = models.ForeignKey(PartMaster, on_delete=models.PROTECT)
     direction = models.CharField(max_length=3, choices=DIRECTION_CHOICES)
     quantity = models.PositiveIntegerField()
-    company = models.CharField(max_length=160)
     operator = models.CharField(max_length=160)
     note = models.CharField(max_length=400, blank=True)
     part_number_snapshot = models.CharField(max_length=160)

@@ -11,7 +11,7 @@ class InventoryTests(TestCase):
         self.system = SystemMaster.objects.create(name="制御A")
         self.other = SystemMaster.objects.create(name="制御B")
         self.part = PartMaster.objects.create(part_number="P100", model_number="V1", name="センサ")
-        self.actor = {"company": "協力会社", "operator": "担当者"}
+        self.actor = {"operator": "担当者"}
 
     def movement(self, direction, quantity, system=None, part=None):
         return create_movement({
@@ -19,6 +19,16 @@ class InventoryTests(TestCase):
             "part_id": (part or self.part).id, "direction": direction,
             "quantity": quantity, **self.actor,
         })
+
+    def test_company_is_not_required_for_movement_or_correction(self):
+        first = self.movement("IN", 2)
+        self.assertFalse(hasattr(StockHistory.objects.get(pk=first.pk), "company"))
+        corrected = correct_movement(first.pk, {
+            "direction": "IN", "quantity": 1,
+            "note": "記載修正", "operator": "担当者",
+        })
+        self.assertEqual(corrected[1].operator, "担当者")
+        self.assertEqual(inventory_rows()[0]["quantity"], 1)
 
     def test_system_separation_and_negative_block(self):
         self.movement("IN", 5)
