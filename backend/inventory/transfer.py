@@ -90,6 +90,12 @@ def write_snapshot(system_id=None, filters=None):
     systems = list(SystemMaster.objects.filter(pk=system_id) if system_id else SystemMaster.objects.all())
     system_ids = [obj.pk for obj in systems]
     part_ids = _select_ids(system_ids, filters)
+    # Referenced predecessor/successor masters are exported to preserve lineage,
+    # but should not secretly expand a classification-filtered stock snapshot.
+    stock_part_ids = (
+        set(PartMaster.objects.filter(pk__in=part_ids, **filters).values_list("id", flat=True))
+        if filters else part_ids
+    )
     parts = list(PartMaster.objects.filter(pk__in=part_ids).order_by("id"))
     equipment_ids = {part.equipment_id for part in parts if part.equipment_id}
     section_ids = {part.section_id for part in parts if part.section_id}
@@ -102,7 +108,7 @@ def write_snapshot(system_id=None, filters=None):
     categories = list(PartCategory.objects.filter(pk__in=category_ids).order_by("pk"))
     stock = balances()
     alerts = list(StockAlertSetting.objects.filter(
-        system_id__in=system_ids, part_id__in=part_ids
+        system_id__in=system_ids, part_id__in=stock_part_ids
     ).order_by("system_id", "part_id"))
     threshold_map = {(a.system_id, a.part_id): a.threshold for a in alerts}
     part_map = {p.id: p for p in parts}
@@ -113,7 +119,7 @@ def write_snapshot(system_id=None, filters=None):
     hidden_stocks = []
     for sid in sorted(system_ids):
         for pid in sorted(part_ids):
-            qty = stock.get((sid, pid), 0)
+            qty = stock.get((sid, pid), 0) if pid in stock_part_ids else 0
             threshold = threshold_map.get((sid, pid))
             hidden_stocks.append((sid, pid, qty))
             if qty > 0 or threshold is not None:
