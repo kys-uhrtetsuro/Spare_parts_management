@@ -54,7 +54,7 @@ jobs:
   build:
     needs: stop-outdated
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: ソース取得
         uses: actions/checkout@v4
