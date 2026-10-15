@@ -198,3 +198,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [検証待ち] GitHub ActionsでMSVCランチャーのビルド、アイコン、Django日本語リソース、ZIP配置
 - [実機確認待ち] pywebview起動、入出庫、SQLite既存データ、終了時のロックとセキュリティ製品の検知状況
 - [ブランチ] feature/standalone-src-launcher（ReleaseへPR反映）
+
+- Standalone配布ビルド元: 9d55e481f82cfdb6507429916266576a567081a9
+- Standalone配布ZIP: 64260119 bytes（Git制限超過時はGitHub Releases）
+
