@@ -17,20 +17,21 @@ from openpyxl import load_workbook
 
 from .models import (
     EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion,
-    StockAlertSetting, StockHistory, StockImportBatch, SystemMaster,
+    StockAlertSetting, StockHistory, StockImportBatch, SystemMaster, SystemPartPlacement,
 )
 from .services import InputError, WRITE_LOCK, balances, text_field
 
-FORMAT = "SPARE_PARTS_SNAPSHOT_V1"
+FORMAT = "SPARE_PARTS_SNAPSHOT_V2"
 HEADERS = ("システム", "品番", "型式", "品名", "現在庫", "下限値", "警告")
 SCHEMAS = {
     "__manifest": ("key", "value"),
     "__systems": ("id", "name"),
-    "__equipment": ("id", "name", "alias"),
+    "__equipment": ("id", "system_id", "name", "alias"),
     "__sections": ("id", "equipment_id", "name"),
     "__categories": ("id", "name"),
     "__parts": ("id", "part_number", "model_number", "name",
-                "previous_part_id", "equipment_id", "section_id", "category_id"),
+                "previous_part_id", "category_id"),
+    "__placements": ("system_id", "part_id", "equipment_id", "section_id"),
     "__stocks": ("system_id", "part_id", "quantity"),
     "__alerts": ("system_id", "part_id", "threshold"),
 }
@@ -64,8 +65,21 @@ def _select_ids(system_ids, filters):
     """Part masters actively referenced by selected systems, plus their lineage."""
     used = set(StockHistory.objects.filter(system_id__in=system_ids).values_list("part_id", flat=True))
     used.update(StockAlertSetting.objects.filter(system_id__in=system_ids).values_list("part_id", flat=True))
+    used.update(SystemPartPlacement.objects.filter(system_id__in=system_ids).values_list("part_id", flat=True))
     if filters:
-        allowed = set(PartMaster.objects.filter(**filters).values_list("id", flat=True))
+        categories = PartMaster.objects.all()
+        if filters.get("category"):
+            categories = categories.filter(category_id=filters["category"])
+        allowed = set(categories.values_list("pk", flat=True))
+        equipment = {}
+        if filters.get("equipment"):
+            equipment["equipment_id"] = filters["equipment"]
+        if filters.get("section"):
+            equipment["section_id"] = filters["section"]
+        if equipment:
+            allowed.intersection_update(SystemPartPlacement.objects.filter(
+                system_id__in=system_ids, **equipment
+            ).values_list("part_id", flat=True))
         used.intersection_update(allowed)
     all_parts = dict(PartMaster.objects.values_list("id", "previous_part_id"))
     # Include ancestors and successors so the copied system knows its upgrade chains.
@@ -92,23 +106,36 @@ def write_snapshot(system_id=None, filters=None):
     part_ids = _select_ids(system_ids, filters)
     # Referenced predecessor/successor masters are exported to preserve lineage,
     # but should not secretly expand a classification-filtered stock snapshot.
-    stock_part_ids = (
-        set(PartMaster.objects.filter(pk__in=part_ids, **filters).values_list("id", flat=True))
-        if filters else part_ids
-    )
     parts = list(PartMaster.objects.filter(pk__in=part_ids).order_by("id"))
-    equipment_ids = {part.equipment_id for part in parts if part.equipment_id}
-    section_ids = {part.section_id for part in parts if part.section_id}
-    category_ids = {part.category_id for part in parts if part.category_id}
-    equipment_ids.update(
-        EquipmentSection.objects.filter(pk__in=section_ids).values_list("equipment_id", flat=True)
-    )
-    equipment = list(EquipmentMaster.objects.filter(pk__in=equipment_ids).order_by("pk"))
-    sections = list(EquipmentSection.objects.filter(pk__in=section_ids).order_by("pk"))
-    categories = list(PartCategory.objects.filter(pk__in=category_ids).order_by("pk"))
+    # Machine instances are system-owned, even if no part has been attached.
+    equipment = list(EquipmentMaster.objects.filter(system_id__in=system_ids).order_by("id"))
+    equipment_ids = {e.id for e in equipment}
+    sections = list(EquipmentSection.objects.filter(
+        equipment_id__in=equipment_ids
+    ).order_by("id"))
+    placements = list(SystemPartPlacement.objects.filter(
+        system_id__in=system_ids, part_id__in=part_ids
+    ).order_by("system_id", "part_id"))
+    category_ids = {p.category_id for p in parts if p.category_id}
+    categories = list(PartCategory.objects.filter(pk__in=category_ids).order_by("id"))
+    stock_pairs = {(sid, pid) for sid in system_ids for pid in part_ids}
+    if filters:
+        category_filter = filters.get("category")
+        machine_filter = filters.get("equipment")
+        section_filter = filters.get("section")
+        matching_placements = {
+            (x.system_id, x.part_id) for x in placements
+            if (not machine_filter or x.equipment_id == machine_filter)
+            and (not section_filter or x.section_id == section_filter)
+        }
+        stock_pairs = {
+            (sid, pid) for sid, pid in stock_pairs
+            if (not category_filter or next(p for p in parts if p.pk == pid).category_id == category_filter)
+            and (not (machine_filter or section_filter) or (sid, pid) in matching_placements)
+        }
     stock = balances()
     alerts = list(StockAlertSetting.objects.filter(
-        system_id__in=system_ids, part_id__in=stock_part_ids
+        system_id__in=system_ids, part_id__in=part_ids
     ).order_by("system_id", "part_id"))
     threshold_map = {(a.system_id, a.part_id): a.threshold for a in alerts}
     part_map = {p.id: p for p in parts}
@@ -119,8 +146,9 @@ def write_snapshot(system_id=None, filters=None):
     hidden_stocks = []
     for sid in sorted(system_ids):
         for pid in sorted(part_ids):
-            qty = stock.get((sid, pid), 0) if pid in stock_part_ids else 0
-            threshold = threshold_map.get((sid, pid))
+            enabled = (sid, pid) in stock_pairs
+            qty = stock.get((sid, pid), 0) if enabled else 0
+            threshold = threshold_map.get((sid, pid)) if enabled else None
             hidden_stocks.append((sid, pid, qty))
             if qty > 0 or threshold is not None:
                 p = part_map[pid]
@@ -143,13 +171,16 @@ def write_snapshot(system_id=None, filters=None):
         sheets = {
             "__manifest": [("format", FORMAT), ("created_at", datetime.now().isoformat())],
             "__systems": [(s.id, s.name) for s in systems],
-            "__equipment": [(x.id, x.name, x.alias) for x in equipment],
+            "__equipment": [(x.id, x.system_id, x.name, x.alias) for x in equipment],
             "__sections": [(x.id, x.equipment_id, x.name) for x in sections],
             "__categories": [(x.id, x.name) for x in categories],
             "__parts": [(
                 p.id, p.part_number, p.model_number, p.name,
-                p.previous_part_id, p.equipment_id, p.section_id, p.category_id,
+                p.previous_part_id, p.category_id,
             ) for p in parts],
+            "__placements": [
+                (p.system_id, p.part_id, p.equipment_id, p.section_id) for p in placements
+            ],
             "__stocks": hidden_stocks,
             "__alerts": [(a.system_id, a.part_id, a.threshold) for a in alerts],
         }
@@ -247,6 +278,12 @@ def read_snapshot(blob):
                 raise InputError(f"参照先の{label}が見つかりません")
             return rid
 
+        for machine in equipment.values():
+            machine["system_id"] = optref(machine.get("system_id"), systems, "システム")
+            if machine["system_id"] is None:
+                raise InputError("機器にはシステムを指定してください")
+        if len({(e["system_id"], e["name"]) for e in equipment.values()}) != len(equipment):
+            raise InputError("同一システム内で機器名が重複しています")
         for section in sections.values():
             section["equipment_id"] = optref(section.get("equipment_id"), equipment, "機器")
             if section["equipment_id"] is None:
@@ -258,15 +295,26 @@ def read_snapshot(blob):
                 raise InputError("部品の品番と型式が重複しています")
             seen_identifiers.add(pair)
             for col, table, name in [
-                ("previous_part_id", parts, "前版部品"), ("equipment_id", equipment, "機器"),
-                ("section_id", sections, "部位"), ("category_id", categories, "分類"),
+                ("previous_part_id", parts, "前版部品"), ("category_id", categories, "分類"),
             ]:
                 part[col] = optref(part.get(col), table, name)
-            if part["section_id"] and (
-                not part["equipment_id"]
-                or sections[part["section_id"]]["equipment_id"] != part["equipment_id"]
-            ):
-                raise InputError("部位の所属機器が一致しません")
+
+        placements = {}
+        for item in _table(book, "__placements"):
+            sid = optref(item.get("system_id"), systems, "システム")
+            pid = optref(item.get("part_id"), parts, "部品")
+            eid = optref(item.get("equipment_id"), equipment, "機器")
+            sec = optref(item.get("section_id"), sections, "部位")
+            if (sid, pid) in placements:
+                raise InputError("機器割当が重複しています")
+            if sid is None or pid is None or eid is None:
+                raise InputError("機器割当の参照が不足しています")
+            if equipment[eid]["system_id"] != sid:
+                raise InputError("割当機器の所属システムが一致しません")
+            if sec is not None and sections[sec]["equipment_id"] != eid:
+                raise InputError("割当部位の所属機器が一致しません")
+            placements[(sid, pid)] = (eid, sec)
+
         # Topological order guards against circular and self-referential versions.
         sorted_parts = []
         pending = set(parts)
@@ -344,7 +392,7 @@ def read_snapshot(blob):
             "checksum": hashlib.sha256(blob).hexdigest(),
             "systems": systems, "equipment": equipment, "sections": sections,
             "categories": categories, "parts": parts, "sorted_parts": sorted_parts,
-            "stock": final_stock, "alerts": final_alerts,
+            "stock": final_stock, "alerts": final_alerts, "placements": placements,
         }
     finally:
         book.close()
@@ -384,21 +432,24 @@ def apply_snapshot(payload, *, rename=None):
         if SystemMaster.objects.filter(name__in=system_names.values()).exists():
             raise InputError("同名システムがあります。取り込み先システム名を変更してください")
 
+        system_map = {
+            sid: SystemMaster.objects.create(name=name).pk
+            for sid, name in system_names.items()
+        }
         eq_map = {}
         for src_id, obj in payload["equipment"].items():
-            target, _ = EquipmentMaster.objects.get_or_create(
-                name=obj["name"], defaults={"alias": obj["alias"]},
+            equipment = EquipmentMaster.objects.create(
+                system_id=system_map[obj["system_id"]],
+                name=obj["name"], alias=obj["alias"],
             )
-            if target.alias != obj["alias"]:
-                raise InputError(f"機器『{target.name}』の通称が既存マスタと異なります")
-            eq_map[src_id] = target.pk
+            eq_map[src_id] = equipment.pk
 
         section_map = {}
         for src_id, obj in payload["sections"].items():
-            target, _ = EquipmentSection.objects.get_or_create(
+            section = EquipmentSection.objects.create(
                 equipment_id=eq_map[obj["equipment_id"]], name=obj["name"],
             )
-            section_map[src_id] = target.pk
+            section_map[src_id] = section.pk
 
         cat_map = {}
         for src_id, obj in payload["categories"].items():
@@ -411,8 +462,6 @@ def apply_snapshot(payload, *, rename=None):
             expected = {
                 "name": obj["name"],
                 "previous_part_id": part_map.get(obj["previous_part_id"]),
-                "equipment_id": eq_map.get(obj["equipment_id"]),
-                "section_id": section_map.get(obj["section_id"]),
                 "category_id": cat_map.get(obj["category_id"]),
             }
             target, created = PartMaster.objects.get_or_create(
@@ -434,10 +483,14 @@ def apply_snapshot(payload, *, rename=None):
                     new_model_number=obj["model_number"],
                 )
 
-        system_map = {
-            sid: SystemMaster.objects.create(name=name).pk
-            for sid, name in system_names.items()
-        }
+        SystemPartPlacement.objects.bulk_create([
+            SystemPartPlacement(
+                system_id=system_map[sid], part_id=part_map[pid],
+                equipment_id=eq_map[eid],
+                section_id=section_map.get(section),
+            )
+            for (sid, pid), (eid, section) in payload["placements"].items()
+        ])
         new_rows = []
         for (sid, pid), qty in payload["stock"].items():
             if qty:

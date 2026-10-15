@@ -1,9 +1,10 @@
 """Inventory calculations and write operations. The ledger is the source of truth."""
 from collections import defaultdict
+from datetime import datetime
 from threading import RLock
 
 from django.db import IntegrityError, transaction
-from django.db.models import Case, F, IntegerField, Sum, When
+from django.db.models import Case, F, IntegerField, Max, Sum, When
 
 from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
 
@@ -84,6 +85,12 @@ def inventory_rows(system_id=None, show_all=False):
     keys = set(stock) | set(thresholds)
     if show_all:
         keys |= {(s, p) for s in systems for p in parts}
+    recent = {
+        (r["system_id"], r["part_id"]): r["updated"]
+        for r in StockHistory.objects.values("system_id", "part_id").annotate(
+            updated=Max("created_at")
+        )
+    }
     result = []
     for sid, pid in keys:
         if system_id is not None and sid != system_id:
@@ -100,9 +107,15 @@ def inventory_rows(system_id=None, show_all=False):
             "system_id": sid, "system": system.name, "part_id": pid,
             "part_number": part.part_number, "model_number": part.model_number,
             "name": part.name, "quantity": amount, "threshold": threshold,
+            "last_updated": recent.get((sid, pid)).isoformat() if recent.get((sid, pid)) else None,
             "alert": threshold is not None and amount <= threshold,
         })
-    return sorted(result, key=lambda r: (r["system"], r["part_number"], r["model_number"]))
+    # Newest movement first; monitored parts with no movement come last.
+    return sorted(result, key=lambda r: (
+        r["last_updated"] is None,
+        -datetime.fromisoformat(r["last_updated"]).timestamp() if r["last_updated"] else 0,
+        r["system_id"], r["part_id"]
+    ))
 
 
 def create_movement(data):

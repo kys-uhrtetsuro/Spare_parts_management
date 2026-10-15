@@ -76,7 +76,7 @@ class PartVersion(models.Model):
     changed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-changed_at", "-id"]
+        ordering = ["id"]
 
 
 class StockHistory(models.Model):
@@ -97,7 +97,7 @@ class StockHistory(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-created_at", "-id"]
+        ordering = ["id"]
         constraints = [
             models.CheckConstraint(condition=Q(quantity__gte=1), name="history_positive_quantity"),
         ]
@@ -126,4 +126,4 @@ class StockImportBatch(models.Model):
     imported_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-imported_at"]
+        ordering = ["id"]

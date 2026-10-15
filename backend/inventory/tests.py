@@ -2,8 +2,8 @@ import io
 import json
 from django.test import TestCase
 
-from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
-from .services import InputError, change_part, correct_movement, create_movement, inventory_rows, replace_alerts
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster, SystemPartPlacement
+from .services import InputError, change_part, correct_movement, create_movement, inventory_rows, replace_alerts, create_part
 
 
 class InventoryTests(TestCase):
@@ -95,13 +95,12 @@ class InventoryTests(TestCase):
         self.assertEqual(len(response.json()["items"]), 2)
 
     def test_machine_section_category_reverse_lookup(self):
-        machine = EquipmentMaster.objects.create(name="搬送装置")
+        machine = EquipmentMaster.objects.create(system=self.system, name="搬送装置")
         section = EquipmentSection.objects.create(equipment=machine, name="制御盤")
         category = PartCategory.objects.create(name="制御機器")
-        self.part.equipment = machine
-        self.part.section = section
         self.part.category = category
         self.part.save()
+        SystemPartPlacement.objects.create(system=self.system, part=self.part, equipment=machine, section=section)
         another = PartMaster.objects.create(
             part_number="P500", model_number="V1", name="ベアリング",
         )
@@ -139,11 +138,12 @@ class InventoryTests(TestCase):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from openpyxl import load_workbook
         from .models import StockImportBatch
-        machine = EquipmentMaster.objects.create(name="仕分け装置", alias="ソータ")
+        machine = EquipmentMaster.objects.create(system=self.system, name="仕分け装置", alias="ソータ")
         section = EquipmentSection.objects.create(equipment=machine, name="搬送系")
         category = PartCategory.objects.create(name="制御機器")
-        self.part.equipment, self.part.section, self.part.category = machine, section, category
+        self.part.category = category
         self.part.save()
+        SystemPartPlacement.objects.create(system=self.system, part=self.part, equipment=machine, section=section)
         version = change_part(self.part, {
             "part_number": "P200", "model_number": "V2", "name": "センサ新",
         })
@@ -161,6 +161,7 @@ class InventoryTests(TestCase):
         self.assertEqual(book["__systems"].sheet_state, "hidden")
         self.assertEqual(book["__parts"].sheet_state, "hidden")
         self.assertEqual(book["__equipment"].sheet_state, "hidden")
+        self.assertEqual(book["__placements"].sheet_state, "hidden")
         self.assertEqual(book["__sections"].sheet_state, "hidden")
         self.assertEqual(book["__categories"].sheet_state, "hidden")
         self.assertEqual(book["現在庫"]["E2"].value, 8)
@@ -196,6 +197,11 @@ class InventoryTests(TestCase):
         )
         self.assertEqual(PartVersion.objects.count(), 1)
         self.assertEqual(StockHistory.objects.filter(system=new).count(), 2)
+        relocated = EquipmentMaster.objects.get(system=new, name="仕分け装置")
+        self.assertNotEqual(machine.id, relocated.id)
+        assignment = SystemPartPlacement.objects.get(system=new, part=self.part)
+        self.assertEqual(assignment.equipment_id, relocated.id)
+        self.assertEqual(assignment.section.name, "搬送系")
 
         twice = upload("/api/import/apply", system_name="制御A-複製2")
         self.assertEqual(twice.status_code, 400)
@@ -276,7 +282,7 @@ class InventoryTests(TestCase):
     def test_master_api_assigns_optional_equipment_and_category(self):
         response = self.client.post(
             "/api/equipment",
-            data=json.dumps({"name": "仕分設備", "alias": "ソータ"}),
+            data=json.dumps({"system_id": self.system.pk, "name": "仕分設備", "alias": "ソータ"}),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
@@ -297,13 +303,16 @@ class InventoryTests(TestCase):
             "/api/parts",
             data=json.dumps({
                 "part_number": "P200", "model_number": "V1", "name": "ローラー",
-                "equipment_id": equipment_id, "section_id": section_id,
-                "category_id": category,
+                "system_id": self.system.pk, "equipment_id": equipment_id,
+                "section_id": section_id, "category_id": category,
             }),
             content_type="application/json",
         )
         self.assertEqual(result.status_code, 201)
-        self.assertEqual(result.json()["item"]["section_id"], section_id)
+        self.assertEqual(result.json()["item"]["category_id"], category)
+        self.assertEqual(result.json()["item"]["placements"], [{
+            "system_id": self.system.pk, "equipment_id": equipment_id, "section_id": section_id,
+        }])
 
         invalid = self.client.post(
             "/api/parts",
@@ -314,6 +323,36 @@ class InventoryTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(invalid.status_code, 400)
+
+    def test_equipment_is_system_scoped_and_parts_shared(self):
+        a = EquipmentMaster.objects.create(system=self.system, name="仕分設備")
+        b = EquipmentMaster.objects.create(system=self.other, name="仕分設備")
+        self.assertNotEqual(a.pk, b.pk)
+        SystemPartPlacement.objects.create(system=self.system, part=self.part, equipment=a)
+        SystemPartPlacement.objects.create(system=self.other, part=self.part, equipment=b)
+        self.assertEqual(SystemPartPlacement.objects.filter(part=self.part).count(), 2)
+        self.assertEqual([x["id"] for x in self.client.get(
+            "/api/parts?system=" + str(self.other.id) + "&equipment=" + str(b.id)
+        ).json()["items"]], [self.part.pk])
+        with self.assertRaises(InputError):
+            create_part({
+                "part_number": "BAD-1", "model_number": "1", "name": "誤割当",
+                "system_id": self.system.pk, "equipment_id": b.pk,
+            })
+        self.assertFalse(PartMaster.objects.filter(part_number="BAD-1").exists())
+
+    def test_stock_summary_last_movement_order_and_history_ascending(self):
+        first = self.movement("IN", 1)
+        second = self.movement("IN", 1, part=PartMaster.objects.create(
+            part_number="P200", model_number="V1", name="新しい部品",
+        ))
+        rows = inventory_rows()
+        self.assertEqual(rows[0]["part_number"], "P200")
+        self.assertGreaterEqual(rows[0]["last_updated"], rows[1]["last_updated"])
+        history_ids = [v["id"] for v in self.client.get("/api/history").json()["items"]]
+        self.assertEqual(history_ids, [first.id, second.id])
+        systems = [v["id"] for v in self.client.get("/api/systems").json()["items"]]
+        self.assertEqual(systems, sorted(systems))
 
     def test_api_csrf_and_validation(self):
         client = self.client_class(enforce_csrf_checks=True)

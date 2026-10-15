@@ -14,9 +14,9 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from .transfer import write_snapshot, read_snapshot, preview_snapshot, apply_snapshot, MAX_XLSX_BYTES
-from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster, SystemPartPlacement
 from .services import (
-    InputError, balance, change_part, correct_movement, create_movement,
+    InputError, balance, change_part, create_part, correct_movement, create_movement,
     find_part, find_system, inventory_rows, part_assignments, positive_int, replace_alerts, text_field,
 )
 
@@ -50,8 +50,11 @@ def serialize_part(part):
     return {
         "id": part.id, "part_number": part.part_number,
         "model_number": part.model_number, "name": part.name,
-        "previous_part_id": part.previous_part_id, "equipment_id": part.equipment_id,
-        "section_id": part.section_id, "category_id": part.category_id,
+        "previous_part_id": part.previous_part_id, "category_id": part.category_id,
+        "placements": [
+            {"system_id": x.system_id, "equipment_id": x.equipment_id, "section_id": x.section_id}
+            for x in part.placements.all()
+        ],
     }
 
 
@@ -77,7 +80,7 @@ def health(request):
 @endpoint(["GET", "POST"])
 def systems(request):
     if request.method == "GET":
-        return JsonResponse({"items": list(SystemMaster.objects.values("id", "name"))})
+        return JsonResponse({"items": list(SystemMaster.objects.order_by("id").values("id", "name"))})
     data = body(request)
     name = text_field(data.get("name"), "システム名", 120)
     s = SystemMaster.objects.create(name=name)
@@ -95,13 +98,15 @@ def system_detail(request, pk):
 @endpoint(["GET", "POST"])
 def equipment(request):
     if request.method == "GET":
-        return JsonResponse({"items": list(EquipmentMaster.objects.values("id", "name", "alias"))})
+        return JsonResponse({"items": list(EquipmentMaster.objects.order_by("id").values("id", "system_id", "name", "alias"))})
     data = body(request)
+    system = find_system(data.get("system_id"))
     item = EquipmentMaster.objects.create(
+        system=system,
         name=text_field(data.get("name"), "機器名", 160),
         alias=text_field(data.get("alias", ""), "機器通称", 160, required=False),
     )
-    return JsonResponse({"item": {"id": item.pk, "name": item.name, "alias": item.alias}}, status=201)
+    return JsonResponse({"item": {"id": item.pk, "system_id": item.system_id, "name": item.name, "alias": item.alias}}, status=201)
 
 
 @endpoint(["PUT"])
@@ -114,14 +119,14 @@ def equipment_detail(request, pk):
     item.name = text_field(data.get("name"), "機器名", 160)
     item.alias = text_field(data.get("alias", ""), "機器通称", 160, required=False)
     item.save(update_fields=["name", "alias"])
-    return JsonResponse({"item": {"id": item.pk, "name": item.name, "alias": item.alias}})
+    return JsonResponse({"item": {"id": item.pk, "system_id": item.system_id, "name": item.name, "alias": item.alias}})
 
 
 @endpoint(["GET", "POST"])
 def equipment_sections(request):
     if request.method == "GET":
         return JsonResponse({"items": list(
-            EquipmentSection.objects.values("id", "equipment_id", "name")
+            EquipmentSection.objects.order_by("id").values("id", "equipment_id", "name")
         )})
     data = body(request)
     equipment_id = positive_int(data.get("equipment_id"), "機器ID")
@@ -153,7 +158,7 @@ def equipment_section_detail(request, pk):
 @endpoint(["GET", "POST"])
 def categories(request):
     if request.method == "GET":
-        return JsonResponse({"items": list(PartCategory.objects.values("id", "name"))})
+        return JsonResponse({"items": list(PartCategory.objects.order_by("id").values("id", "name"))})
     data = body(request)
     item = PartCategory.objects.create(name=text_field(data.get("name"), "分類名", 160))
     return JsonResponse({"item": {"id": item.pk, "name": item.name}}, status=201)
@@ -174,23 +179,21 @@ def category_detail(request, pk):
 def parts(request):
     if request.method == "POST":
         data = body(request)
-        p = PartMaster.objects.create(
-            part_number=text_field(data.get("part_number"), "品番", 160),
-            model_number=text_field(data.get("model_number"), "型式", 160),
-            name=text_field(data.get("name"), "品名", 250),
-            **part_assignments(data),
-        )
+        p = create_part(data)
         return JsonResponse({"item": serialize_part(p)}, status=201)
     query = request.GET.get("q", "").strip()
     qs = PartMaster.objects.all()
-    filter_ids = {
-        "equipment_id": request.GET.get("equipment"),
-        "section_id": request.GET.get("section"),
-        "category_id": request.GET.get("category"),
-    }
-    for field, value in filter_ids.items():
+    category = request.GET.get("category")
+    if category not in (None, ""):
+        qs = qs.filter(category_id=positive_int(category, "分類"))
+    placement_filters = {}
+    for field, param in (("system_id", "system"), ("equipment_id", "equipment"), ("section_id", "section")):
+        value = request.GET.get(param)
         if value not in (None, ""):
-            qs = qs.filter(**{field: positive_int(value, field)})
+            placement_filters[field] = positive_int(value, param)
+    if placement_filters:
+        assigned = SystemPartPlacement.objects.filter(**placement_filters).values_list("part_id", flat=True)
+        qs = qs.filter(pk__in=assigned)
     if query:
         from django.db.models import Q
         old_ids = PartVersion.objects.filter(
@@ -200,7 +203,7 @@ def parts(request):
             Q(part_number__icontains=query) | Q(model_number__icontains=query)
             | Q(name__icontains=query) | Q(pk__in=old_ids)
         )
-    return JsonResponse({"items": [serialize_part(p) for p in qs.order_by("part_number", "model_number")]})
+    return JsonResponse({"items": [serialize_part(p) for p in qs.order_by("id")]})
 
 
 @endpoint(["PUT"])
@@ -234,20 +237,24 @@ def system_param(request):
 
 
 def filter_inventory_rows(request, rows):
-    """Allow reverse lookup by equipment, section and category across stock views."""
+    """Resolve equipment and section per system (not globally per part)."""
+    category = request.GET.get("category")
+    if category not in (None, ""):
+        allowed = set(PartMaster.objects.filter(
+            category_id=positive_int(category, "分類")
+        ).values_list("id", flat=True))
+        rows = [r for r in rows if r["part_id"] in allowed]
     filters = {}
-    for field, param in (
-        ("equipment_id", "equipment"), ("section_id", "section"),
-        ("category_id", "category"),
-    ):
-        raw = request.GET.get(param)
-        if raw not in (None, ""):
-            filters[field] = positive_int(raw, param)
-    if not filters:
-        return rows
-    ids = set(PartMaster.objects.filter(**filters).values_list("pk", flat=True))
-    return [row for row in rows if row["part_id"] in ids]
-
+    for field, param in (("equipment_id", "equipment"), ("section_id", "section")):
+        value = request.GET.get(param)
+        if value not in (None, ""):
+            filters[field] = positive_int(value, param)
+    if filters:
+        pairs = set(SystemPartPlacement.objects.filter(**filters).values_list(
+            "system_id", "part_id"
+        ))
+        rows = [r for r in rows if (r["system_id"], r["part_id"]) in pairs]
+    return rows
 
 @endpoint(["GET"])
 def stocks(request):
@@ -266,7 +273,8 @@ def history(request):
     records = StockHistory.objects.select_related("system", "part")
     if system_id:
         records = records.filter(system_id=system_id)
-    records = list(records[:500])
+    # Keep the newest 500 records but present them by ascending ID.
+    records = sorted(records.order_by("-id")[:500], key=lambda row: row.id)
     corrected_ids = set(
         StockHistory.objects.filter(reversal_of_id__in=[r.id for r in records])
         .values_list("reversal_of_id", flat=True)
@@ -287,7 +295,7 @@ def history_correct(request, pk):
 def alerts(request):
     system = find_system(request.GET.get("system"))
     return JsonResponse({"items": list(
-        StockAlertSetting.objects.filter(system=system).values("part_id", "threshold")
+        StockAlertSetting.objects.filter(system=system).order_by("part_id").values("part_id", "threshold")
     )})
 
 
@@ -303,13 +311,10 @@ def alerts_bulk(request):
 def export_excel(request):
     system_id = system_param(request)
     filters = {}
-    for field, param in (
-        ("equipment_id", "equipment"), ("section_id", "section"),
-        ("category_id", "category"),
-    ):
+    for param in ("equipment", "section", "category"):
         value = request.GET.get(param)
         if value not in (None, ""):
-            filters[field] = positive_int(value, param)
+            filters[param] = positive_int(value, param)
     stream = io.BytesIO(write_snapshot(system_id, filters))
     response = FileResponse(
         stream, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

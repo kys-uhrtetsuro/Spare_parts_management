@@ -19,3 +19,15 @@
 .import-summary p{margin:8px 0;font-size:12px;line-height:1.6}
 .import-summary .field{margin-top:12px}
 .import-warning{color:#b45327;font-weight:700}
+
+/* Operational pages open by default, master-management pages closed. */
+.sidebar nav{display:flex;flex-direction:column;gap:9px}
+.nav-group{border:1px solid #304260;border-radius:10px;padding:4px 0;overflow:hidden}
+.nav-group-title{cursor:pointer;list-style:none;user-select:none;display:flex;justify-content:space-between;align-items:center;color:#c8d8f0;font-weight:700;font-size:12px;padding:13px 13px}
+.nav-group-title::-webkit-details-marker{display:none}
+.nav-group-title:hover{background:#273d5d}
+.nav-group-title:focus-visible{outline:2px solid #80b4fd;outline-offset:-2px}
+.nav-chevron{display:inline-block;font-size:21px;line-height:12px;transition:transform .16s}
+.nav-group[open] .nav-chevron{transform:rotate(180deg)}
+.nav-group-items{display:flex;flex-direction:column;gap:3px;padding:3px 7px 7px}
+.nav-group .navitem{padding:11px 13px;font-size:12px;width:100%}

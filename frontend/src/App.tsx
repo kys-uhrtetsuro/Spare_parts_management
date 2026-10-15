@@ -2,11 +2,12 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import appIcon from './assets/spare_parts.png'
 
 type System = { id: number; name: string }
-type Equipment = { id: number; name: string; alias: string }
+type Equipment = { id: number; system_id: number; name: string; alias: string }
 type Section = { id: number; equipment_id: number; name: string }
 type Category = { id: number; name: string }
-type Part = { id: number; part_number: string; model_number: string; name: string; previous_part_id: number | null; equipment_id: number | null; section_id: number | null; category_id: number | null }
-type Stock = { system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; quantity: number; threshold: number | null; alert: boolean }
+type Placement = { system_id: number; equipment_id: number; section_id: number | null }
+type Part = { id: number; part_number: string; model_number: string; name: string; previous_part_id: number | null; category_id: number | null; placements: Placement[] }
+type Stock = { system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; quantity: number; threshold: number | null; alert: boolean; last_updated: string | null }
 type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
 type Alert = { part_id: number; threshold: number }
 type Version = { id: number; old_part_number: string; old_model_number: string; new_part_number: string; new_model_number: string; changed_at: string }
@@ -16,14 +17,17 @@ type ImportPreview = {
   conflicts: string[]; already_imported: boolean
 }
 type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
-type PartForm = { part_number: string; model_number: string; name: string; equipment_id: string; section_id: string; category_id: string }
+type PartForm = { part_number: string; model_number: string; name: string; system_id: string; equipment_id: string; section_id: string; category_id: string }
 type Editor = { mode: 'create' | 'edit'; partId?: number; values: PartForm }
 type MovementForm = { direction: 'IN' | 'OUT'; quantity: string; operator: string; note: string }
-const emptyPart: PartForm = { part_number: '', model_number: '', name: '', equipment_id: '', section_id: '', category_id: '' }
-function valuesFromPart(p: Part): PartForm {
+const emptyPart: PartForm = { part_number: '', model_number: '', name: '', system_id: '', equipment_id: '', section_id: '', category_id: '' }
+function valuesFromPart(p: Part, systemId: string): PartForm {
+  const placement = p.placements.find(x => String(x.system_id) === systemId) ?? p.placements[0]
   return {
     part_number: p.part_number, model_number: p.model_number, name: p.name,
-    equipment_id: String(p.equipment_id ?? ''), section_id: String(p.section_id ?? ''),
+    system_id: systemId || String(placement?.system_id ?? ''),
+    equipment_id: String(placement?.equipment_id ?? ''),
+    section_id: String(placement?.section_id ?? ''),
     category_id: String(p.category_id ?? ''),
   }
 }
@@ -75,15 +79,19 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   </div>
 }
 const views: { id: View; label: string }[] = [
-  { id: 'stock', label: '現在庫一覧' }, { id: 'history', label: '入出庫履歴' },
-  { id: 'parts', label: '部品マスタ' }, { id: 'alerts', label: '下限アラート設定' },
-  { id: 'systems', label: 'システム管理' },
-  { id: 'equipment', label: '機器・部位マスタ' },
+  { id: 'stock', label: '現在在庫一覧' },
+  { id: 'history', label: '入出庫履歴' },
+  { id: 'alerts', label: '下限アラート設定' },
+  { id: 'systems', label: 'システム一覧' },
+  { id: 'equipment', label: '機器/部位マスタ' },
   { id: 'categories', label: '部品分類マスタ' },
+  { id: 'parts', label: '部品マスタ' },
 ]
 
 export default function App() {
   const [tab, setTab] = useState<View>('stock')
+  const [inventoryMenuOpen, setInventoryMenuOpen] = useState(true)
+  const [systemMenuOpen, setSystemMenuOpen] = useState(false)
   const [systems, setSystems] = useState<System[]>([])
   const [parts, setParts] = useState<Part[]>([])
   const [equipments, setEquipments] = useState<Equipment[]>([])
@@ -108,7 +116,7 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [systemModal, setSystemModal] = useState<{ id?: number; name: string } | null>(null)
-  const [equipmentModal, setEquipmentModal] = useState<{ id?: number; name: string; alias: string } | null>(null)
+  const [equipmentModal, setEquipmentModal] = useState<{ id?: number; system_id: number; name: string; alias: string } | null>(null)
   const [sectionModal, setSectionModal] = useState<{ id?: number; equipment_id: number; name: string } | null>(null)
   const [categoryModal, setCategoryModal] = useState<{ id?: number; name: string } | null>(null)
   const [movementModal, setMovementModal] = useState(false)
@@ -159,25 +167,35 @@ export default function App() {
   }
   // Reverse lookup: all parts assigned to the selected equipment, section, category,
   // regardless of current stock, plus the equivalent filter on the stock overview.
-  const matchesClassifications = (p: Part) =>
-    (!equipmentFilter || String(p.equipment_id) === equipmentFilter) &&
-    (!sectionFilter || String(p.section_id) === sectionFilter) &&
-    (!categoryFilter || String(p.category_id) === categoryFilter)
-  const matchedIds = new Set(parts.filter(matchesClassifications).map(p => p.id))
-  const filteredStocks = stocks.filter(x =>
-    matchedIds.has(x.part_id) &&
-    [x.system, x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(query.toLowerCase()))
-  )
-  const filteredParts = parts.filter(x =>
-    matchesClassifications(x) &&
-    [x.part_number, x.model_number, x.name,
-      equipments.find(e => e.id === x.equipment_id)?.name ?? '',
-      equipments.find(e => e.id === x.equipment_id)?.alias ?? '',
-      sections.find(sec => sec.id === x.section_id)?.name ?? '',
-      categories.find(c => c.id === x.category_id)?.name ?? '',
+  const matchesClassifications = (p: Part, systemId: string) => {
+    const placements = p.placements.filter(x => !systemId || String(x.system_id) === systemId)
+    return (!categoryFilter || String(p.category_id) === categoryFilter) &&
+      (!equipmentFilter && !sectionFilter || placements.some(x =>
+        (!equipmentFilter || String(x.equipment_id) === equipmentFilter) &&
+        (!sectionFilter || String(x.section_id) === sectionFilter)))
+  }
+  const partsById = new Map(parts.map(p => [p.id, p]))
+  const filteredStocks = stocks.filter(row => {
+    const part = partsById.get(row.part_id)
+    return part !== undefined && matchesClassifications(part, String(row.system_id)) &&
+      [row.system, row.part_number, row.model_number, row.name].some(
+        value => value.toLowerCase().includes(query.toLowerCase())
+      )
+  })
+  const filteredParts = parts.filter(p =>
+    matchesClassifications(p, selected) &&
+    [p.part_number, p.model_number, p.name,
+      ...p.placements.flatMap(a => [
+        equipments.find(e => e.id === a.equipment_id)?.name ?? '',
+        equipments.find(e => e.id === a.equipment_id)?.alias ?? '',
+        sections.find(x => x.id === a.section_id)?.name ?? '',
+      ]),
+      categories.find(c => c.id === p.category_id)?.name ?? '',
     ].some(v => v.toLowerCase().includes(query.toLowerCase()))
   )
   const viewMatchingParts = (equipmentId = '', categoryId = '') => {
+    const eq = equipments.find(e => String(e.id) === equipmentId)
+    if (eq) setSelected(String(eq.system_id))
     setEquipmentFilter(equipmentId)
     setSectionFilter('')
     setCategoryFilter(categoryId)
@@ -226,7 +244,7 @@ export default function App() {
     const success = await act(() => api(
       equipmentModal.id ? 'equipment/' + equipmentModal.id : 'equipment',
       equipmentModal.id ? 'PUT' : 'POST',
-      { name: equipmentModal.name, alias: equipmentModal.alias },
+      { name: equipmentModal.name, alias: equipmentModal.alias, system_id: equipmentModal.system_id },
     ), '機器マスタを保存しました')
     if (success) setEquipmentModal(null)
   }
@@ -317,21 +335,40 @@ export default function App() {
   }
   const openEditor = async (part: Part) => {
     setVersions([])
-    setEditor({ mode: 'edit', partId: part.id, values: valuesFromPart(part) })
+    setEditor({ mode: 'edit', partId: part.id, values: valuesFromPart(part, selected) })
     try { setVersions((await api<{ items: Version[] }>('parts/' + part.id + '/versions')).items) }
     catch (e) { setError(String(e)) }
   }
   const openNewPart = () => {
     setVersions([])
-    setEditor({ mode: 'create', values: { ...emptyPart, part_number: partSearch.trim() } })
+    setEditor({ mode: 'create', values: { ...emptyPart, system_id: selected, part_number: partSearch.trim() } })
   }
-  const needSystem = tab === 'alerts' || tab === 'history' || tab === 'stock'
+  const needSystem = tab === 'alerts' || tab === 'history' || tab === 'stock' || tab === 'parts' || tab === 'equipment'
 
   return <div className="app">
     <aside className="sidebar">
       <div className="brand"><div className="brandmark"><img src={appIcon} alt="" aria-hidden="true" /></div><div><strong>SPARE PARTS</strong><small>予備品管理システム</small></div></div>
       <p className="nav-label">メニュー</p>
-      <nav>{views.map(v => <button key={v.id} className={'navitem ' + (tab === v.id ? 'active' : '')} onClick={() => { setTab(v.id); setQuery(''); setError(''); setNotice('') }}>{v.label}</button>)}</nav>
+      <nav aria-label="メインメニュー">
+        {([
+          { title: '在庫管理', ids: ['stock', 'history', 'alerts'] as View[], opened: inventoryMenuOpen, toggle: setInventoryMenuOpen },
+          { title: 'システム管理', ids: ['systems', 'equipment', 'categories', 'parts'] as View[], opened: systemMenuOpen, toggle: setSystemMenuOpen },
+        ]).map(group => <details className="nav-group" key={group.title}
+            open={group.opened} onToggle={e => group.toggle(e.currentTarget.open)}>
+          <summary className="nav-group-title">【{group.title}】<span className="nav-chevron" aria-hidden="true">⌄</span></summary>
+          <div className="nav-group-items">
+            {group.ids.map(id => {
+              const view = views.find(v => v.id === id)
+              if (!view) return null
+              return <button key={id} className={'navitem ' + (tab === id ? 'active' : '')}
+                aria-current={tab === id ? 'page' : undefined}
+                onClick={() => { setTab(id); setQuery(''); setError(''); setNotice('') }}>
+                {view.label}
+              </button>
+            })}
+          </div>
+        </details>)}
+      </nav>
       
     </aside>
     <main className="main">
@@ -341,8 +378,8 @@ export default function App() {
       </div>
       <div className="toolbar">
         {needSystem && <label className="field compact">対象システム
-          <select value={selected} onChange={e => setSelected(e.target.value)}>
-            <option value="">{tab === 'alerts' ? 'システムを選択してください' : 'すべてのシステム'}</option>
+          <select value={selected} onChange={e => { setSelected(e.target.value); setEquipmentFilter(''); setSectionFilter('') }}>
+            <option value="">{tab === 'alerts' || tab === 'equipment' ? 'システムを選択してください' : 'すべてのシステム'}</option>
             {systems.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>}
@@ -351,7 +388,7 @@ export default function App() {
           <label className="field compact">機器
             <select aria-label="機器で絞り込み" value={equipmentFilter} onChange={e => { setEquipmentFilter(e.target.value); setSectionFilter('') }}>
               <option value="">すべて</option>
-              {equipments.map(e => <option key={e.id} value={e.id}>{e.name}{e.alias ? '（' + e.alias + '）' : ''}</option>)}
+              {equipments.filter(e => !selected || String(e.system_id) === selected).map(e => <option key={e.id} value={e.id}>{e.name}{e.alias ? '（' + e.alias + '）' : ''}</option>)}
             </select>
           </label>
           <label className="field compact">部位
@@ -382,9 +419,9 @@ export default function App() {
             <button className="button primary" onClick={openMovement} disabled={!selected}>＋ 入出庫を登録</button>
           </>}
           {tab === 'history' && <button className="button primary" disabled={!selected} onClick={openMovement}>＋ 入出庫を登録</button>}
-          {tab === 'parts' && <button className="button primary" onClick={() => { setVersions([]); setEditor({ mode: 'create', values: { ...emptyPart } }) }}>＋ 部品を追加</button>}
+          {tab === 'parts' && <button className="button primary" onClick={() => { setVersions([]); setEditor({ mode: 'create', values: { ...emptyPart, system_id: selected } }) }}>＋ 部品を追加</button>}
           {tab === 'systems' && <button className="button primary" onClick={() => setSystemModal({ name: '' })}>＋ 新規システム名称を登録</button>}
-          {tab === 'equipment' && <button className="button primary" onClick={() => setEquipmentModal({ name: '', alias: '' })}>＋ 機器を追加</button>}
+          {tab === 'equipment' && <button className="button primary" disabled={!selected} onClick={() => setEquipmentModal({ name: '', alias: '', system_id: Number(selected) })}>＋ 機器を追加</button>}
           {tab === 'categories' && <button className="button primary" onClick={() => setCategoryModal({ name: '' })}>＋ 分類を追加</button>}
           {tab === 'alerts' && <button className="button primary" disabled={!selected || busy} onClick={submitAlerts}>変更を一括保存</button>}
         </div>
@@ -398,12 +435,12 @@ export default function App() {
           <div className="stat warning"><span>下限以下の部品</span><strong>{criticalCount}</strong></div>
         </div>
         <section className="panel"><div className="panel-head"><h2>在庫サマリー</h2><span className="help">在庫1以上、または下限アラート設定あり</span></div>
-          <div className="table-wrap"><table><thead><tr><th>システム</th><th>品番</th><th>型式</th><th>品名</th><th className="right">現在庫</th><th className="right">下限値</th><th>状態</th></tr></thead>
-            <tbody>{filteredStocks.map(x => <tr key={x.system_id + ':' + x.part_id}><td>{x.system}</td><td className="mono">{x.part_number}</td><td className="mono">{x.model_number}</td><td>{x.name}</td><td className="right quantity">{x.quantity}</td><td className="right">{x.threshold ?? '—'}</td><td>{x.alert ? <span className="chip bad">下限以下</span> : <span className="chip ok">正常</span>}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>システム</th><th>品番</th><th>型式</th><th>品名</th><th className="right">現在庫</th><th className="right">下限値</th><th>最終更新</th><th>状態</th></tr></thead>
+            <tbody>{filteredStocks.map(x => <tr key={x.system_id + ':' + x.part_id}><td>{x.system}</td><td className="mono">{x.part_number}</td><td className="mono">{x.model_number}</td><td>{x.name}</td><td className="right quantity">{x.quantity}</td><td className="right">{x.threshold ?? '—'}</td><td className="nowrap">{x.last_updated ? dateTime(x.last_updated) : '—'}</td><td>{x.alert ? <span className="chip bad">下限以下</span> : <span className="chip ok">正常</span>}</td></tr>)}</tbody></table></div>
           {!filteredStocks.length && <p className="empty">該当する在庫がありません。</p>}
         </section>
       </>}
-      {tab === 'history' && <section className="panel"><div className="panel-head"><h2>記録履歴</h2><span className="help">最新500件 / 訂正時は元履歴を保持</span></div>
+      {tab === 'history' && <section className="panel"><div className="panel-head"><h2>記録履歴</h2><span className="help">直近500件をID昇順で表示 / 訂正時は元履歴を保持</span></div>
         <div className="table-wrap"><table><thead><tr><th>日時</th><th>システム</th><th>品番 / 型式</th><th>区分</th><th className="right">数量</th><th>登録者</th><th>備考</th><th></th></tr></thead>
           <tbody>{history.map(h => <tr key={h.id}><td className="nowrap">{dateTime(h.created_at)}</td><td>{h.system}</td><td>{h.part_number}<br/><small>{h.model_number}</small></td><td><span className={'chip ' + (h.direction === 'IN' ? 'ok' : 'neutral')}>{h.direction === 'IN' ? '補充' : '使用'}</span></td><td className="right quantity">{h.direction === 'IN' ? '+' : '−'}{h.quantity}</td><td>{h.operator}</td><td>{h.note}{h.reversal_of && <small> (取消レコード)</small>}</td><td>{!h.corrected && !h.reversal_of && <button className="button tiny secondary" onClick={() => openCorrection(h)}>訂正</button>}</td></tr>)}</tbody></table></div>
         {!history.length && <p className="empty">まだ入出庫履歴がありません。</p>}
@@ -412,7 +449,11 @@ export default function App() {
         <div className="table-wrap"><table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>機器 / 部位</th><th>分類</th><th>新旧の対応</th><th>操作</th></tr></thead>
           <tbody>{filteredParts.map(p => <tr key={p.id}>
             <td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td>
-            <td>{equipments.find(e => e.id === p.equipment_id)?.name ?? '—'}{p.section_id && <small> / {sections.find(x => x.id === p.section_id)?.name}</small>}</td>
+            <td>{p.placements.filter(a => !selected || String(a.system_id) === selected).map(a =>
+              <div key={a.system_id}>{equipments.find(e => e.id === a.equipment_id)?.name ?? '—'}
+                {a.section_id && <small> / {sections.find(x => x.id === a.section_id)?.name}</small>}
+                {!selected && <small>（{systems.find(sys => sys.id === a.system_id)?.name}）</small>}</div>
+            )}</td>
             <td>{categories.find(c => c.id === p.category_id)?.name ?? '—'}</td>
             <td>
               {p.previous_part_id ? <span className="lineage-tag">前：{(() => {
@@ -433,8 +474,8 @@ export default function App() {
       </section>}
       {tab === 'equipment' && <section className="panel">
         <div className="panel-head"><h2>登録機器と部位</h2><span className="help">部位なしの機器も登録可能</span></div>
-        <div className="system-grid">{equipments.map(e => <div className="system-card" key={e.id}>
-          <strong>{e.name}</strong>{e.alias && <small>通称：{e.alias}</small>}
+        <div className="system-grid">{equipments.filter(e => selected && String(e.system_id) === selected).map(e => <div className="system-card" key={e.id}>
+          <strong>{e.name}</strong><small>システム：{systems.find(sys => sys.id === e.system_id)?.name}</small>{e.alias && <small>通称：{e.alias}</small>}
           <div className="master-card-actions"><button className="button tiny secondary" onClick={() => setEquipmentModal({ ...e })}>編集</button>
           <button className="button tiny secondary" onClick={() => viewMatchingParts(String(e.id))}>関連部品を見る</button>
           <button className="button tiny secondary" onClick={() => setSectionModal({ equipment_id: e.id, name: '' })}>＋ 部位を追加</button></div>
@@ -445,7 +486,7 @@ export default function App() {
               }}>関連部品</button>
               <button className="button tiny secondary" onClick={() => setSectionModal({ ...section })}>編集</button>
             </div></div>)}
-        </div>)}</div>{equipments.length === 0 && <p className="empty">機器マスタが未登録です。</p>}
+        </div>)}</div>{!selected ? <p className="empty">システムを選択してください。</p> : equipments.filter(e => String(e.system_id) === selected).length === 0 && <p className="empty">このシステムには機器が未登録です。</p>}
       </section>}
       {tab === 'categories' && <section className="panel">
         <div className="panel-head"><h2>部品分類マスタ</h2></div>
@@ -547,10 +588,19 @@ export default function App() {
       <div className="form-grid">{([
         ['part_number', '品番'], ['model_number', '型式'], ['name', '品名'],
       ] as const).map(([key, title]) => <label className="field" key={key}>{title}<input value={editor.values[key]} onChange={e => setEditor(p => p && ({ ...p, values: { ...p.values, [key]: e.target.value } }))} /></label>)}
+        <label className="field">割当先システム（任意）
+          <select aria-label="割当先システム（任意）" value={editor.values.system_id}
+            onChange={e => setEditor(p => p && ({
+              ...p, values: { ...p.values, system_id: e.target.value, equipment_id: '', section_id: '' }
+            }))}>
+            <option value="">機器を割り当てない</option>
+            {systems.map(sys => <option key={sys.id} value={sys.id}>{sys.name}</option>)}
+          </select>
+        </label>
         <label className="field">機器（任意）
-          <select value={editor.values.equipment_id} onChange={e => setEditor(p => p && ({
+          <select value={editor.values.equipment_id} disabled={!editor.values.system_id} onChange={e => setEditor(p => p && ({
             ...p, values: { ...p.values, equipment_id: e.target.value, section_id: '' }
-          }))}><option value="">未指定</option>{equipments.map(eq => <option key={eq.id} value={eq.id}>{eq.name}{eq.alias ? '（' + eq.alias + '）' : ''}</option>)}</select>
+          }))}><option value="">未指定</option>{equipments.filter(eq => String(eq.system_id) === editor.values.system_id).map(eq => <option key={eq.id} value={eq.id}>{eq.name}{eq.alias ? '（' + eq.alias + '）' : ''}</option>)}</select>
         </label>
         <label className="field">部位（任意）
           <select value={editor.values.section_id} disabled={!editor.values.equipment_id} onChange={e => setEditor(p => p && ({
