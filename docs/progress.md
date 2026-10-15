@@ -58,6 +58,16 @@
 - Windowsビルド成功後、生成したPNG/ICOと配布用ZIPをGitに登録
 - 最新EXEでのWindows実機アイコン反映は検証待ち
 
+## Excelシステム移植
+- 現在庫Excelの非表示シートにシステム・機器・部位・分類・部品・新旧対応・下限・在庫を保持
+- Excel取込前にプレビューし、名称衝突と二重取込を検知
+- 編集可能な内容は「現在庫」の在庫数量・下限値
+- 在庫は新規システムの期首補充履歴として追加（元履歴はコピーしない）
+- 単一システムなら取込先のシステム名を変更できる
+- SQLiteバックアップは従来どおりファイルコピーで復元
+- Windows 11 64bit推奨、Windows 10 64bit対応対象（実機未検証）
+- 取り込み回帰テスト・CIとWindows成果物の確認待ち
+
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

@@ -135,6 +135,135 @@ class InventoryTests(TestCase):
         with self.assertRaises(InputError):
             correct_movement(original.pk, {"direction": "IN", "quantity": 4, "note": "重複", **self.actor})
 
+    def test_excel_roundtrip_forks_system_stock_and_metadata(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .models import StockImportBatch
+        machine = EquipmentMaster.objects.create(name="仕分け装置", alias="ソータ")
+        section = EquipmentSection.objects.create(equipment=machine, name="搬送系")
+        category = PartCategory.objects.create(name="制御機器")
+        self.part.equipment, self.part.section, self.part.category = machine, section, category
+        self.part.save()
+        version = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "センサ新",
+        })
+        self.movement("IN", 8)
+        self.movement("IN", 3, part=version)
+        self.movement("OUT", 1, part=version)
+        replace_alerts(self.system, [
+            {"part_id": version.id, "threshold": 3}
+        ])
+
+        download = self.client.get(f"/api/export?system={self.system.pk}")
+        self.assertEqual(download.status_code, 200)
+        content = b"".join(download.streaming_content)
+        book = load_workbook(io.BytesIO(content))
+        self.assertEqual(book["__systems"].sheet_state, "hidden")
+        self.assertEqual(book["__parts"].sheet_state, "hidden")
+        self.assertEqual(book["__equipment"].sheet_state, "hidden")
+        self.assertEqual(book["__sections"].sheet_state, "hidden")
+        self.assertEqual(book["__categories"].sheet_state, "hidden")
+        self.assertEqual(book["現在庫"]["E2"].value, 8)
+        book.close()
+
+        def upload(path, **fields):
+            return self.client.post(
+                path, data={"file": SimpleUploadedFile(
+                    "移植元.xlsx", content,
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ), **fields}
+            )
+
+        preview = upload("/api/import/preview")
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.json()["part_count"], 2)
+        self.assertEqual(preview.json()["system_count"], 1)
+        self.assertEqual(preview.json()["quantity_total"], 10)
+        self.assertIn("制御A", preview.json()["conflicts"])
+
+        duplicate_name = upload("/api/import/apply")
+        self.assertEqual(duplicate_name.status_code, 400)
+        self.assertEqual(StockImportBatch.objects.count(), 0)
+
+        applied = upload("/api/import/apply", system_name="制御A-複製")
+        self.assertEqual(applied.status_code, 201, applied.content)
+        new = SystemMaster.objects.get(name="制御A-複製")
+        from .services import balance
+        self.assertEqual(balance(new.pk, self.part.pk), 8)
+        self.assertEqual(balance(new.pk, version.pk), 2)
+        self.assertEqual(
+            StockAlertSetting.objects.get(system=new, part=version).threshold, 3
+        )
+        self.assertEqual(PartVersion.objects.count(), 1)
+        self.assertEqual(StockHistory.objects.filter(system=new).count(), 2)
+
+        twice = upload("/api/import/apply", system_name="制御A-複製2")
+        self.assertEqual(twice.status_code, 400)
+        self.assertFalse(SystemMaster.objects.filter(name="制御A-複製2").exists())
+        self.assertEqual(StockImportBatch.objects.count(), 1)
+
+    def test_excel_snapshot_allows_quantity_and_threshold_edits(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        self.movement("IN", 2)
+        book = load_workbook(io.BytesIO(
+            b"".join(self.client.get(f"/api/export?system={self.system.pk}").streaming_content)
+        ))
+        book["現在庫"]["E2"] = 5
+        book["現在庫"]["F2"] = 3
+        out = io.BytesIO()
+        book.save(out)
+        doc = SimpleUploadedFile("数量変更.xlsx", out.getvalue())
+        response = self.client.post(
+            "/api/import/apply",
+            data={"file": doc, "system_name": "制御A-別サイト"},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        system = SystemMaster.objects.get(name="制御A-別サイト")
+        from .services import balance
+        self.assertEqual(balance(system.pk, self.part.pk), 5)
+        self.assertEqual(
+            StockAlertSetting.objects.get(system=system, part=self.part).threshold, 3
+        )
+
+    def test_excel_import_rejects_modified_parts_and_negative_quantity(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        self.movement("IN", 3)
+        original = b"".join(
+            self.client.get(f"/api/export?system={self.system.pk}").streaming_content
+        )
+        for column, value in [("E2", -2), ("B2", "FAKE-100")]:
+            workbook = load_workbook(io.BytesIO(original))
+            workbook["現在庫"][column] = value
+            out = io.BytesIO()
+            workbook.save(out)
+            response = self.client.post(
+                "/api/import/apply",
+                data={
+                    "file": SimpleUploadedFile("改ざん.xlsx", out.getvalue()),
+                    "system_name": "取込テスト",
+                },
+            )
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertFalse(SystemMaster.objects.filter(name="取込テスト").exists())
+
+    def test_excel_import_refuses_old_display_only_format(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+        book = Workbook()
+        ws = book.active
+        ws.title = "現在庫"
+        ws.append(["システム", "品番", "型式", "品名", "現在庫", "下限値", "警告"])
+        data = io.BytesIO()
+        book.save(data)
+        resp = self.client.post(
+            "/api/import/preview",
+            data={"file": SimpleUploadedFile("旧形式.xlsx", data.getvalue())},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("メタデータ", resp.json()["error"])
+
     def test_excel_includes_zero_when_alerted(self):
         replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 1}])
         response = self.client.get("/api/export")

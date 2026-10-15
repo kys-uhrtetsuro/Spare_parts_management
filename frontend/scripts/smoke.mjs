@@ -110,6 +110,19 @@ try {
   await page.getByRole('link', { name: 'Excel出力' }).click()
   const download = await downloadPromise
   assert.equal(download.suggestedFilename(), 'spare_parts_stock.xlsx')
+  const exportPath = await download.path()
+  assert.ok(exportPath, 'Exported workbook must exist')
+  await page.getByRole('button', { name: 'Excel取込' }).click()
+  const importDialog = page.getByRole('dialog', { name: 'Excelからシステム・現在庫を取り込む' })
+  await importDialog.getByLabel('取り込むExcelファイル').setInputFiles(exportPath)
+  await importDialog.getByRole('button', { name: '内容を確認' }).click()
+  await importDialog.getByText('同名システムが存在：').waitFor()
+  await importDialog.getByLabel('移植先システム名（変更する場合のみ）').fill('テストシステムA（複製）')
+  await importDialog.getByRole('button', { name: '取り込みを確定' }).click()
+  await importDialog.waitFor({ state: 'hidden' })
+  await page.getByLabel('対象システム').selectOption({ label: 'テストシステムA（複製）' })
+  assert.equal(await page.getByRole('cell', { name: '3', exact: true }).count(), 1)
+
   console.log('Playwright smoke test OK: master, movement, alert and Excel export')
 } finally {
   if (browser) await browser.close()

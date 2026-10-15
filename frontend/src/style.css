@@ -13,3 +13,9 @@
 
 .brandmark{overflow:hidden;background:transparent}
 .brandmark img{width:100%;height:100%;object-fit:cover;display:block;border-radius:10px}
+
+.import-summary{background:#f4f8ff;border:1px solid #dae6f5;padding:14px 18px;border-radius:10px;margin-top:14px}
+.import-summary h3{font-size:14px;margin:0 0 9px}
+.import-summary p{margin:8px 0;font-size:12px;line-height:1.6}
+.import-summary .field{margin-top:12px}
+.import-warning{color:#b45327;font-weight:700}

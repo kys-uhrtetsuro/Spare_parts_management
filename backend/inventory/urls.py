@@ -20,5 +20,7 @@ urlpatterns = [
     path("alerts", views.alerts),
     path("alerts/bulk", views.alerts_bulk),
     path("export", views.export_excel),
+    path("import/preview", views.import_preview),
+    path("import/apply", views.import_apply),
     path("backup", views.backup),
 ]

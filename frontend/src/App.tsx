@@ -10,6 +10,11 @@ type Stock = { system_id: number; system: string; part_id: number; part_number: 
 type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
 type Alert = { part_id: number; threshold: number }
 type Version = { id: number; old_part_number: string; old_model_number: string; new_part_number: string; new_model_number: string; changed_at: string }
+type ImportPreview = {
+  checksum: string; systems: string[]; system_count: number; equipment_count: number
+  part_count: number; opening_rows: number; quantity_total: number; alert_count: number
+  conflicts: string[]; already_imported: boolean
+}
 type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
 type PartForm = { part_number: string; model_number: string; name: string; equipment_id: string; section_id: string; category_id: string }
 type Editor = { mode: 'create' | 'edit'; partId?: number; values: PartForm }
@@ -36,6 +41,22 @@ async function api<T>(path: string, method = 'GET', data?: unknown): Promise<T> 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: '通信エラー' })) as { error?: string }
     throw new Error(error.error ?? 'HTTP ' + response.status)
+  }
+  return response.json() as Promise<T>
+}
+async function uploadWorkbook<T>(path: string, file: File, rename?: string): Promise<T> {
+  const body = new FormData()
+  body.append('file', file)
+  if (rename?.trim()) body.append('system_name', rename.trim())
+  const response = await fetch('/api/' + path, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': decodeURIComponent(token()) },
+    credentials: 'same-origin',
+    body,
+  })
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ error: '取り込みに失敗しました' })) as { error?: string }
+    throw new Error(result.error ?? 'HTTP ' + response.status)
   }
   return response.json() as Promise<T>
 }
@@ -79,6 +100,11 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [importModal, setImportModal] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
+  const [importRename, setImportRename] = useState('')
+  const [importError, setImportError] = useState('')
   const [editor, setEditor] = useState<Editor | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [systemModal, setSystemModal] = useState<{ id?: number; name: string } | null>(null)
@@ -247,6 +273,40 @@ export default function App() {
     )
     if (success) setAlerts(items)
   }
+  const previewImport = async () => {
+    if (!importFile) { setImportError('Excelファイルを指定してください'); return }
+    setImportError('')
+    setBusy(true)
+    try {
+      const data = await uploadWorkbook<ImportPreview>('import/preview', importFile)
+      setImportPreview(data)
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    } finally { setBusy(false) }
+  }
+  const applyImport = async () => {
+    if (!importFile || !importPreview) return
+    if (importPreview.already_imported) {
+      setImportError('このExcelは既に取り込まれています')
+      return
+    }
+    setImportError('')
+    setBusy(true)
+    try {
+      const result = await uploadWorkbook<{ systems: string[]; opening_rows: number }>(
+        'import/apply', importFile, importRename,
+      )
+      setNotice(result.systems.join('、') + 'を取り込みました（期首在庫' + result.opening_rows + '件）')
+      setImportModal(false)
+      setImportPreview(null)
+      setImportFile(null)
+      setImportRename('')
+      setSelected('')
+      try { await load() } catch { setError('保存しましたが、一覧の再読込に失敗しました') }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : String(err))
+    } finally { setBusy(false) }
+  }
   const openMovement = () => {
     setPickedPart(null); setPartSearch(''); setPartPicker(false); setMovement({ direction: 'IN', quantity: '1', operator: lastOperator, note: '' })
     setMovementModal(true)
@@ -309,6 +369,10 @@ export default function App() {
         </>}
         <div className="toolbar-actions">
           {tab === 'stock' && <>
+            <button className="button secondary" onClick={() => {
+              setImportModal(true); setImportFile(null); setImportPreview(null)
+              setImportRename(''); setImportError('')
+            }}>Excel取込</button>
             <a className="button secondary" href={'/api/export?' + new URLSearchParams({
               ...(selected ? { system: selected } : {}),
               ...(equipmentFilter ? { equipment: equipmentFilter } : {}),
@@ -411,6 +475,41 @@ export default function App() {
       <footer className="footer"><span>Spare Parts Management</span><button onClick={async () => { await act(() => api('backup', 'POST', {}), 'data/backups にSQLiteバックアップを作成しました') }}>DBバックアップを作成</button></footer>
     </main>
 
+    {importModal && <Modal title="Excelからシステム・現在庫を取り込む" onClose={() => setImportModal(false)}>
+      <p className="help">Excel出力で作ったファイルを選択してください。表示中の在庫数・下限値はExcel上で変更できます。
+        非表示シートの機器・部位・分類・部品情報を使って、対象システムと期首在庫を新規作成します。入出庫の過去履歴はコピーしません。</p>
+      <div className="form-grid">
+        <label className="field wide">Excelファイル（.xlsx）
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            aria-label="取り込むExcelファイル" onChange={e => {
+              setImportFile(e.target.files?.[0] ?? null); setImportPreview(null); setImportError('')
+            }}/>
+        </label>
+      </div>
+      {importError && <div className="message error" role="alert">{importError}</div>}
+      {importPreview && <div className="import-summary">
+        <h3>取り込み内容の確認</h3>
+        <p>システム：{importPreview.systems.join('、')}</p>
+        <p>機器：{importPreview.equipment_count}件 / 部品：{importPreview.part_count}件 /
+          期首在庫：{importPreview.opening_rows}件（合計{importPreview.quantity_total}個） /
+          下限設定：{importPreview.alert_count}件</p>
+        {importPreview.already_imported && <p className="import-warning">このExcelは既に取り込み済みです。</p>}
+        {importPreview.conflicts.length > 0 && <p className="import-warning">
+          同名システムが存在：{importPreview.conflicts.join('、')}。移植先の名称を指定してください。
+        </p>}
+        {importPreview.system_count === 1 && <label className="field">移植先システム名（変更する場合のみ）
+          <input value={importRename} onChange={e => setImportRename(e.target.value)} placeholder="例：制御A（別設備）" />
+        </label>}
+      </div>}
+      <div className="dialog-actions">
+        <button className="button secondary" onClick={() => setImportModal(false)}>キャンセル</button>
+        {!importPreview ? <button className="button primary" disabled={busy || !importFile} onClick={previewImport}>内容を確認</button>
+          : <button className="button primary" disabled={
+            busy || importPreview.already_imported ||
+            (importPreview.conflicts.length > 0 && (!importRename.trim() || importPreview.system_count !== 1))
+          } onClick={applyImport}>取り込みを確定</button>}
+      </div>
+    </Modal>}
     {movementModal && <Modal title="入出庫を登録" onClose={() => setMovementModal(false)}>
       <div className="form-grid">
         <label className="field">システム<input disabled value={systems.find(s => String(s.id) === selected)?.name ?? ''} /></label>

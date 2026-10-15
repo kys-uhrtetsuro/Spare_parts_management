@@ -1,5 +1,5 @@
-"""Same-origin JSON API. State-changing requests are protected by Django CSRF."""
 import io
+"""Same-origin JSON API. State-changing requests are protected by Django CSRF."""
 import json
 import mimetypes
 import sqlite3
@@ -13,6 +13,7 @@ from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
+from .transfer import write_snapshot, read_snapshot, preview_snapshot, apply_snapshot, MAX_XLSX_BYTES
 from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
 from .services import (
     InputError, balance, change_part, correct_movement, create_movement,
@@ -300,33 +301,43 @@ def alerts_bulk(request):
 
 @endpoint(["GET"])
 def export_excel(request):
-    import pandas as pd
-
     system_id = system_param(request)
-    rows = filter_inventory_rows(request, inventory_rows(system_id))
-    def excel_text(value):
-        # Prevent untrusted master values from being interpreted as Excel formulas.
-        return "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@")) else value
-
-    data = [
-        {
-            "システム": excel_text(r["system"]), "品番": excel_text(r["part_number"]),
-            "型式": excel_text(r["model_number"]), "品名": excel_text(r["name"]),
-            "現在庫": r["quantity"], "下限値": r["threshold"],
-            "警告": "下限以下" if r["alert"] else "",
-        }
-        for r in rows
-    ]
-    columns = ["システム", "品番", "型式", "品名", "現在庫", "下限値", "警告"]
-    stream = io.BytesIO()
-    pd.DataFrame(data, columns=columns).to_excel(stream, sheet_name="現在庫", index=False, engine="openpyxl")
-    stream.seek(0)
+    filters = {}
+    for field, param in (
+        ("equipment_id", "equipment"), ("section_id", "section"),
+        ("category_id", "category"),
+    ):
+        value = request.GET.get(param)
+        if value not in (None, ""):
+            filters[field] = positive_int(value, param)
+    stream = io.BytesIO(write_snapshot(system_id, filters))
     response = FileResponse(
-        stream,
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        stream, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     response["Content-Disposition"] = 'attachment; filename="spare_parts_stock.xlsx"'
     return response
+
+
+def uploaded_snapshot(request):
+    document = request.FILES.get("file")
+    if not document:
+        raise InputError("取り込むExcelファイルを選択してください")
+    if document.size > MAX_XLSX_BYTES:
+        raise InputError("Excelファイルが10MBを超えています")
+    return read_snapshot(document.read())
+
+
+@endpoint(["POST"])
+def import_preview(request):
+    return JsonResponse(preview_snapshot(uploaded_snapshot(request)))
+
+
+@endpoint(["POST"])
+def import_apply(request):
+    payload = uploaded_snapshot(request)
+    rename = request.POST.get("system_name")
+    result = apply_snapshot(payload, rename=rename if rename else None)
+    return JsonResponse(result, status=201)
 
 
 @endpoint(["POST"])

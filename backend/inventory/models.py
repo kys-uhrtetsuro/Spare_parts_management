@@ -116,3 +116,14 @@ class StockAlertSetting(models.Model):
             models.UniqueConstraint(fields=["system", "part"], name="unique_alert_for_system_part"),
             models.CheckConstraint(condition=Q(threshold__gte=1), name="alert_positive_threshold"),
         ]
+
+
+class StockImportBatch(models.Model):
+    """Tracks imported workbook bytes so a fork cannot silently double stock."""
+    checksum = models.CharField(max_length=64, unique=True)
+    system_count = models.PositiveIntegerField()
+    opening_rows = models.PositiveIntegerField()
+    imported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-imported_at"]
