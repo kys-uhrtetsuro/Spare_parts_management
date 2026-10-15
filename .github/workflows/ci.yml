@@ -2,15 +2,48 @@ name: 予備品管理 CI
 
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [Release, "feature/**"]
+    paths-ignore:
+      - "releases/**"
+      - "docs/progress.md"
+      - "assets/spare_parts.ico"
+      - "frontend/src/assets/spare_parts.png"
   pull_request:
-    branches: [main]
+    branches: [Release]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  cancel-stale-windows:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feature/initial-implementation' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 旧開発ブランチのWindowsビルドをキャンセル
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner, repo, workflow_id: 'windows-build.yml', per_page: 100
+            });
+            const obsolete = runs.filter(r =>
+              r.head_branch === 'feature/initial-implementation' &&
+              ['requested', 'waiting', 'pending', 'queued', 'in_progress'].includes(r.status)
+            );
+            for (const run of obsolete) {
+              try {
+                await github.rest.actions.cancelWorkflowRun({owner, repo, run_id: run.id});
+                core.info(`停止指示: #${run.id}`);
+              } catch (error) {
+                if (![404, 409, 422].includes(error.status)) throw error;
+              }
+            }
+            core.info(`停止対象: ${obsolete.length} 件`);
   django-and-react:
     runs-on: ubuntu-latest
     steps:

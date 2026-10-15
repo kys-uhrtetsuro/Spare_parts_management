@@ -163,3 +163,12 @@ Windowsに以前のアイコンでタスクバーへピン留めしたショー�
 - 品番・型式を何度も更新した場合は、より新しいバージョンまで追跡する。システム間で設定は移動しない。
 - 新規の入出庫だけでなく履歴訂正、Excel取り込み、下限設定一括保存、既存DBのマイグレーションでも同じルールを適用する。
 - アラートの移行は設定テーブルだけを操作する。在庫履歴・現在庫の値は変更しない。
+
+## ブランチとWindows配布
+
+配布基準は `Release`、開発ブランチは `feature/initial-implementation`。
+Windows Nuitkaワークフローは `Release` の更新時のみビルドし、
+`concurrency` で古い実行を停止する。
+配布物は `releases/SparePartsManagement-standalone.zip`。
+その中に `SparePartsManagement.exe` とリソースを同梱する。
+作業データの `data/inventory.sqlite3` は更新時に上書きしない。

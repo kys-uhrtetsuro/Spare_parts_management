@@ -2,7 +2,7 @@
 
 ## 開発対象
 - リポジトリ: Spare_parts_management
-- 基準: main（初期化）
+- 配布基準: Release（旧mainに代わる基準ブランチ）
 - 実装: feature/initial-implementation
 
 ## 機能別確認表
@@ -106,10 +106,18 @@
 - [検証済み] Djangoテスト・Reactビルド・Playwright操作テスト成功（CI 38683110833 / 38683115818）
 - [検証待ち] Windows Nuitkaビルド・配布ZIPのGit登録・Windows実機での動作確認
 
-## mainマージ条件
+## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常
 3. SQLiteを残してEXE入替後も同じ履歴が読める
 4. CI結果と本進捗表を更新
 
 Nexusとは独立したプロジェクトとして管理する。
+
+## 配布ブランチ・CI整理（2026-10-15）
+- Windows NuitkaビルドはReleaseだけで自動実行する。開発ブランチではソーステストのみ実行。
+- concurrencyで新しいWindowsビルドを優先し、過去の実行はactions:writeで停止要求。
+- 一時的に走っていた旧開発ブランチのビルドもCIから一括キャンセル。
+- リリース成果物はRelease/release配下ZIPに登録。配布用画像PNG/ICOもコミット。
+- ドキュメント更新のみは既存EXEのビルド結果を無効化しない。コード更新時は古い成果物を登録しない。
+- Release統合とWindows EXE実機起動は別途確認。

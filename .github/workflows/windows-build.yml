@@ -3,19 +3,58 @@ name: Windows Nuitkaビルド
 on:
   workflow_dispatch:
   push:
-    branches: [feature/initial-implementation]
+    branches: [Release]
     tags:
       - "v*"
     paths-ignore:
       - "releases/**"
       - "docs/progress.md"
+      - "assets/spare_parts.ico"
+      - "frontend/src/assets/spare_parts.png"
+
+# Every branch/tag dispatch belongs to one build slot. A newer run cancels
+# an older run before its Windows compiler can publish outdated binaries.
+concurrency:
+  group: spare-parts-windows-standalone
+  cancel-in-progress: true
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
+  stop-outdated:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 旧Windowsビルドを停止
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner, repo, workflow_id: 'windows-build.yml', per_page: 100
+            });
+            const old = runs.filter(r =>
+              r.id < context.runId &&
+              ['requested', 'waiting', 'pending', 'queued', 'in_progress'].includes(r.status)
+            );
+            for (const run of old) {
+              try {
+                await github.rest.actions.cancelWorkflowRun({owner, repo, run_id: run.id});
+                core.info(`停止指示: #${run.id} (${run.head_sha})`);
+              } catch (error) {
+                if ([404, 409, 422].includes(error.status)) {
+                  core.info(`既に終了: #${run.id} (${error.status})`);
+                } else {
+                  throw error;
+                }
+              }
+            }
+            core.info(`旧ビルド ${old.length} 件の停止を要求しました`);
   build:
+    needs: stop-outdated
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: ソース取得
         uses: actions/checkout@v4
@@ -37,7 +76,7 @@ jobs:
           path: build/launcher.dist/
           if-no-files-found: error
       - name: 配布用ZIPをGitへコミット
-        if: ${{ github.ref == 'refs/heads/feature/initial-implementation' }}
+        if: ${{ github.ref == 'refs/heads/Release' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -47,8 +86,17 @@ jobs:
           $remoteHead = (git rev-parse FETCH_HEAD).Trim()
           $localHead = (git rev-parse HEAD).Trim()
           if ($remoteHead -ne $localHead) {
-            Write-Host 'より新しいコミットがあるため、古い成果物の登録を省略します'
-            exit 0
+            # Documentation updates must not invalidate a correctly built binary.
+            # Never publish a stale binary if executable code changed.
+            $changedPaths = @(git diff --name-only $localHead $remoteHead)
+            $codeChanges = @($changedPaths | Where-Object { $_ -notin @('docs/progress.md', 'README.md') })
+            if ($codeChanges.Count -gt 0) {
+              Write-Host 'より新しいソースがあるため、古い成果物の登録を省略します'
+              exit 0
+            }
+            git merge --ff-only FETCH_HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Documentation-only fast-forward failed' }
+            Write-Host '文書更新を取り込んで最新版の配布を継続します'
           }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
