@@ -22,8 +22,8 @@ $argsList = @(
     "--include-package=config",
     "--include-package=inventory",
     "--include-package=django",
+    "--module-parameter=django-settings-module=config.settings",
     "--include-package=waitress",
-    "--include-package=webview",
     "--include-package-data=webview",
     "--include-data-dir=frontend/dist=frontend/dist",
     "launcher.py"
