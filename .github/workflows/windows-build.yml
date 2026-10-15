@@ -54,29 +54,9 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           $progressPath = 'docs/progress.md'
           $progress = Get-Content $progressPath -Raw -Encoding UTF8
-          $progress = $progress -replace '(?m)^- Windows standalone:.*
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host '成果物に変更はありません'
-            exit 0
-          }
-          git commit -m 'Windows配布用EXE成果物を更新'
-          if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
-          git push origin HEAD:$env:GITHUB_REF_NAME
-          if ($LASTEXITCODE -ne 0) { throw 'Push failed' }
-, '- Windows standalone: GitHub Actionsでコンパイル成功、配布ZIPをGitへ登録済み。GUI実機確認は未完了'
-          $progress = $progress -replace '(?m)^\\| Nuitka Windows standalone/onefile \\|.*
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host '成果物に変更はありません'
-            exit 0
-          }
-          git commit -m 'Windows配布用EXE成果物を更新'
-          if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
-          git push origin HEAD:$env:GITHUB_REF_NAME
-          if ($LASTEXITCODE -ne 0) { throw 'Push failed' }
-, '| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actions standaloneビルド成功・配布ZIPをGit登録済み | GUI実機は未確認 |'
-          $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\\r?\\n', ''
+          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows standalone: GitHub Actionsでコンパイル成功、配布ZIPをGitへ登録済み。GUI実機確認は未完了'
+          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actions standaloneビルド成功・配布ZIPをGit登録済み | GUI実機は未確認 |'
+          $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\r?\n', ''
           $progress += "`n- 配布成果物ビルド元: $localHead`n"
           Set-Content -Path $progressPath -Value $progress -Encoding UTF8
           git add releases/SparePartsManagement-standalone.zip docs/progress.md
