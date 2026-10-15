@@ -50,6 +50,28 @@ class NativeIconTests(unittest.TestCase):
             launcher.APP_USER_MODEL_ID
         )
 
+    def test_onefile_resources_are_separate_from_database_path(self):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            exe_dir = base / "実行先"
+            runtime_dir = base / "一時展開"
+            exe_dir.mkdir()
+            runtime_dir.mkdir()
+            executable = exe_dir / "SparePartsManagement.exe"
+            executable.write_bytes(b"stub")
+            with patch.object(launcher, "__file__", str(runtime_dir / "launcher.py")):
+                with patch.object(launcher.sys, "argv", [str(executable)]):
+                    with patch.dict(os.environ):
+                        data_root = launcher.application_paths()
+                        self.assertEqual(data_root, exe_dir)
+                        self.assertEqual(os.environ["SPARES_RESOURCE_DIR"], str(runtime_dir))
+                        self.assertEqual(os.environ["SPARES_DATA_DIR"], str(exe_dir / "data"))
+            try:
+                launcher.sys.path.remove(str(runtime_dir / "backend"))
+            except ValueError:
+                pass
+
     def test_non_windows_does_not_attempt_windows_api(self):
         with patch.object(launcher.sys, "platform", "linux"):
             launcher.set_windows_app_identity()

@@ -111,7 +111,7 @@
 - [完了] 以前のWindows Nuitka実行をキャンセルし、Releaseの最新コミットだけを対象にビルド
 - [完了] CIはReleaseへの統合コミットで成功（GitHub Actions 38684622907）
 - [実行中] Windows Nuitkaの最新ビルド（90分の上限、古いReleaseビルドは自動取消）
-- [配布待ち] 成功時にreleases/SparePartsManagement-standalone.zip、PNG/ICOをReleaseへ自動コミット
+- [配布待ち] 成功時にreleases/SparePartsManagement-onefile.zip、PNG/ICOをReleaseへ自動コミット
 - [未対応・GitHub設定操作] リポジトリのdefault_branchは現在もmain。GitHubのSettings → General → Default branchでReleaseへ切替が必要。その後mainを削除すれば完全移行（この操作は接続中のGitHubツールでは非対応）
 - [未確認] ユーザーWindows PCでのWebView2起動・タスクバーアイコンの実機確認
 
@@ -152,3 +152,12 @@ Nexusとは独立したプロジェクトとして管理する。
 - 配布成果物ビルド元: af35659c0cae7c8045978506ce0968fcf0ac2d14
 - EXEアイコン: gear / spare parts box（256〜16px、EXEに埋込み）
 
+
+## Onefile配布への移行
+- [実装] `scripts/build_windows.ps1` のデフォルトを `--mode=onefile` に変更（`-Standalone` は開発用）
+- [実装] Nuitkaの一時展開先は内蔵リソース専用、`SPARES_DATA_DIR` はEXEの置かれたフォルダ側に固定
+- [既存仕様維持] `data/inventory.sqlite3` がない場合に初回起動時 `migrate` で自動生成、ある場合は保持
+- [実装] Windows CIでOnefileの起動と2回連続起動による既存SQLite保持を検証
+- [実装] 配布ZIPはOnefile EXEの1ファイルのみ。旧standalone ZIPは新版配布確定時に削除
+- [実装] exeアイコンリソース検査もOnefile側へ切替
+- [確認待ち] 最新Windows CIのOnefile EXEコンパイルと実機起動

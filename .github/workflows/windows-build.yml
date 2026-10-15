@@ -15,10 +15,9 @@ on:
       # for a build-configuration-only change.
       - ".github/workflows/windows-build.yml"
 
-# Every branch/tag dispatch belongs to one build slot. A newer run cancels
-# an older run before its Windows compiler can publish outdated binaries.
+# Only the latest Release Onefile build should run.
 concurrency:
-  group: spare-parts-windows-standalone
+  group: spare-parts-windows-onefile
   cancel-in-progress: true
 
 permissions:
@@ -83,7 +82,7 @@ jobs:
           key: nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             nuitka-v1-${{ runner.os }}-${{ runner.arch }}-py312-${{ hashFiles('requirements.txt') }}-
-      - name: standalone EXEビルド
+      - name: Onefile EXEビルド
         id: nuitka-build
         shell: pwsh
         run: ./scripts/build_windows.ps1
@@ -93,11 +92,14 @@ jobs:
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: ${{ steps.nuitka-cache.outputs.cache-primary-key }}
+      - name: Onefile起動・外部SQLite永続化の検証
+        shell: pwsh
+        run: python scripts/verify_onefile_runtime.py "build/SparePartsManagement.exe"
       - name: EXE成果物保存
         uses: actions/upload-artifact@v4
         with:
-          name: SparePartsManagement-standalone
-          path: build/launcher.dist/
+          name: SparePartsManagement-onefile
+          path: build/SparePartsManagement.exe
           if-no-files-found: error
       - name: 配布用ZIPをGitへコミット
         if: ${{ github.ref == 'refs/heads/Release' }}
@@ -105,7 +107,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          Compress-Archive -Path 'build/launcher.dist/*' -DestinationPath 'releases/SparePartsManagement-standalone.zip' -CompressionLevel Optimal -Force
+          Compress-Archive -Path 'build/SparePartsManagement.exe' -DestinationPath 'releases/SparePartsManagement-onefile.zip' -CompressionLevel Optimal -Force
+          # Remove the superseded multi-file distribution to prevent accidental use.
+          git rm --ignore-unmatch releases/SparePartsManagement-standalone.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Legacy distribution cleanup failed' }
           git fetch origin $env:GITHUB_REF_NAME
           $remoteHead = (git rev-parse FETCH_HEAD).Trim()
           $localHead = (git rev-parse HEAD).Trim()
@@ -126,19 +131,19 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           $progressPath = 'docs/progress.md'
           $progress = Get-Content $progressPath -Raw -Encoding UTF8
-          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows standalone: GitHub Actionsでコンパイル成功、配布ZIPをGitへ登録済み。GUI実機確認は未完了'
-          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actions standaloneビルド成功・配布ZIPをGit登録済み | GUI実機は未確認 |'
+          $progress = $progress -replace '(?m)^- Windows standalone:.*$', '- Windows onefile: GitHub ActionsでコンパイルとSQLite永続化を検証、配布ZIPをGitへ登録済み。GUI実機確認は未完了'
+          $progress = $progress -replace '(?m)^\| Nuitka Windows standalone/onefile \|[^\r\n]*$', '| Nuitka Windows standalone/onefile | Onefile配布に切替済み | GitHub Actions Onefileの起動・外部DB保持・配布ZIP登録成功 | GUI実機は未確認 |'
           $progress = $progress -replace '(?m)^- 配布成果物ビルド元:.*\r?\n', ''
           $progress += "`n- 配布成果物ビルド元: $localHead`n"
           $progress += "- EXEアイコン: gear / spare parts box（256〜16px、EXEに埋込み）`n"
           Set-Content -Path $progressPath -Value $progress -Encoding UTF8
-          git add releases/SparePartsManagement-standalone.zip docs/progress.md assets/spare_parts.ico frontend/src/assets/spare_parts.png
+          git add -A releases docs/progress.md assets/spare_parts.ico frontend/src/assets/spare_parts.png
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) {
             Write-Host '成果物に変更はありません'
             exit 0
           }
-          git commit -m 'Windows配布用EXE成果物を更新'
+          git commit -m 'Windows用Onefile EXE配布成果物を更新'
           if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
           git push origin HEAD:$env:GITHUB_REF_NAME
           if ($LASTEXITCODE -ne 0) { throw 'Push failed' }

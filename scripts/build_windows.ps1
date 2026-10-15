@@ -1,4 +1,4 @@
-param([switch]$Onefile)
+param([switch]$Standalone)
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -15,7 +15,8 @@ try {
 } finally {
     Pop-Location
 }
-$mode = if ($Onefile) { "--mode=onefile" } else { "--mode=standalone" }
+# Onefile is the distribution default. Standalone is only for development debugging.
+$mode = if ($Standalone) { "--mode=standalone" } else { "--mode=onefile" }
 $argsList = @(
     "-m", "nuitka", $mode,
     "--assume-yes-for-downloads",
@@ -36,8 +37,7 @@ $argsList = @(
 $env:PYTHONPATH = (Resolve-Path "backend").Path
 python @argsList
 if ($LASTEXITCODE -ne 0) { throw "Nuitka build failed" }
-if (-not $Onefile) {
-    python scripts/verify_windows_icon.py "build/launcher.dist/SparePartsManagement.exe"
-    if ($LASTEXITCODE -ne 0) { throw "Windows icon verification failed" }
-}
-Write-Host "Nuitka compilation completed. Keep the data directory when upgrading."
+$exe = if ($Standalone) { "build/launcher.dist/SparePartsManagement.exe" } else { "build/SparePartsManagement.exe" }
+python scripts/verify_windows_icon.py $exe "assets/spare_parts.ico"
+if ($LASTEXITCODE -ne 0) { throw "Windows icon verification failed" }
+Write-Host "Nuitka compilation completed: $exe. Keep the external data directory when upgrading."

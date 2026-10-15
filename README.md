@@ -68,18 +68,18 @@ Windowsビルド成功時に生成物もGitへコミットする。
 ./scripts/build_windows.ps1
 ~~~
 
-Windows向けNuitka standaloneビルドを作成。単体EXEの検証は
+Windows向けNuitka **Onefile EXE**を作成する。デバッグ目的のフォルダ配布版は
 \`./scripts/build_windows.ps1 -Onefile\` で実施（初回はstandalone推奨）。
-GitHub Actions は開発ブランチ更新時に Windows Nuitkaビルドし、成功した配布ZIPを releases/SparePartsManagement-standalone.zip としてGitにコミットする（約数十MB）。
+GitHub ActionsはRelease更新時にWindows用Onefile EXEをビルドし、`releases/SparePartsManagement-onefile.zip`（EXEのみ）をGitにコミットする。配布ZIPを展開するとEXEが1個だけ入っている。
 ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1限定のWaitressで動作する。
 
-Nuitka と pywebview の既知互換性のため、pywebviewは6.2を採用している。
+Nuitka と pywebview の既知互換性のため、pywebviewは6.2を採用している。起動時、同梱のDjango・React・アイコンはOnefileの一時展開先から読み、SQLiteは必ず実行ファイル側の `data` を使う。
 
 部品は手入力（既存品番が一意に完全一致する場合）・少数件の候補補完・スクロール可能な一覧モーダルで選択可能。未登録品は明示操作で新規登録する。
 
 ## 配布・バックアップ
 
-standalone配布時は \`build/launcher.dist/\` の中身を丸ごとコピーする。
+配布用ZIPを展開し、**`SparePartsManagement.exe` だけ**を任意の書き込み可能なフォルダに配置する。
 Windows上で \`SparePartsManagement.exe\` を実行すると自動でマイグレーションし、
 EXEと同じディレクトリの \`data/inventory.sqlite3\` を作成する。
 
@@ -169,8 +169,8 @@ Windowsに以前のアイコンでタスクバーへピン留めしたショー�
 配布基準は `Release`、開発ブランチは `feature/initial-implementation`。
 Windows Nuitkaワークフローは `Release` の更新時のみビルドし、
 `concurrency` で古い実行を停止する。
-配布物は `releases/SparePartsManagement-standalone.zip`。
-その中に `SparePartsManagement.exe` とリソースを同梱する。
+配布物は `releases/SparePartsManagement-onefile.zip`。
+ZIPには `SparePartsManagement.exe` だけを格納する。リソースはEXE内に同梱する。
 作業データの `data/inventory.sqlite3` は更新時に上書きしない。
 
 ## 1部品に対する複数機器・部位の割当
@@ -188,3 +188,22 @@ Windows Nuitkaワークフローは `Release` の更新時のみビルドし、
 在庫・部品一覧・入出庫モーダルの機器／部位フィルターは複数割当を逆引き。
 Excel移植形式V3は複数割当行を格納し、V2形式の取り込みにも対応します。
 既存DBの1件の割当はマイグレーション0007後もそのまま維持します。
+
+## Onefileの保存先と初回起動
+
+```text
+任意の書き込み可能なフォルダ/
+  SparePartsManagement.exe
+  data/
+    inventory.sqlite3    ← 初回起動で自動作成
+    .django-secret       ← 初回起動で自動生成する秘密鍵
+    backups/             ← バックアップ実行時のみ作成
+```
+
+- 初回は `data` を自動作成し、Djangoの `migrate` によりSQLiteファイル・テーブルを生成する。
+- 2回目以降は既存DBを保持。実行のたびに在庫を初期化しない。
+- Django・React・アイコン・Python依存DLLはEXE内に入れるため、別フォルダへの手動コピーは不要。Onefile展開ファイルは一時領域に配置する。
+- `data/` はEXEの置かれた場所に生成するので、データも移動したければEXEと `data/` を一緒に移動する。
+- Windowsの `Program Files` など書込禁止フォルダは避ける。WebView2 Runtimeは別途必要。
+- 開発者向けの `SparePartsManagement.exe --verify-install` はウィンドウを開かず、内蔵リソースと外部DBの移行だけを検査する。
+- GitHub ActionsではOnefileを実行してDBが生成されること、2回目の実行後もDB内容が保持されることを検証する。

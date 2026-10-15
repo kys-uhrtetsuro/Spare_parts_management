@@ -10,7 +10,7 @@ def main():
     if sys.platform != "win32":
         raise RuntimeError("Windows only")
     executable = Path(sys.argv[1]).resolve()
-    ico = executable.parent / "assets" / "spare_parts.ico"
+    ico = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else executable.parent / "assets" / "spare_parts.ico"
     if not executable.is_file() or not ico.is_file():
         raise FileNotFoundError(f"EXEまたはアイコンが見つかりません: {executable}, {ico}")
     with Image.open(ico) as image:

@@ -76,10 +76,31 @@ def show_desktop(webview, url, resource_root):
     webview.start(gui="edgechromium", icon=str(icon_path))
 
 
+def verify_installation():
+    """CI-only check: embedded files load and the external SQLite DB migrates."""
+    resource_dir = Path(os.environ["SPARES_RESOURCE_DIR"])
+    if not (resource_dir / "frontend" / "dist" / "index.html").is_file():
+        raise FileNotFoundError("同梱したReact画面が見つかりません")
+    icon_path_for(resource_dir)
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    import django
+    django.setup()
+    from django.core.management import call_command
+    from django.db import connection
+    call_command("migrate", interactive=False, verbosity=0)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM django_migrations")
+        if cursor.fetchone()[0] <= 0:
+            raise RuntimeError("DBの初期化が完了していません")
+
+
 def main():
     app_root = application_paths()
     data_dir = app_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
+    if "--verify-install" in sys.argv[1:]:
+        verify_installation()
+        return
     instance_lock = single_instance(data_dir)
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     import django
