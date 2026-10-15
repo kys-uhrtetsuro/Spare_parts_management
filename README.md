@@ -52,13 +52,13 @@ python backend/manage.py makemigrations --check --dry-run
 ## アイコン生成
 
 歯車と予備品ボックスのアイコンを、GUI・ブラウザfavicon・EXEで共通使用する。
-原本は `assets/spare_parts_icon.webp.b64`。初期実行またはビルド前に生成する。
+原本画像は `assets/spare_parts.webp`（Git管理済み）。初期実行またはビルド前にPNGとICOを生成する。
 
 ~~~powershell
 python scripts/prepare_icon.py
 ~~~
 
-生成物は `frontend/src/assets/spare_parts.png` と `assets/spare_parts.ico`。
+生成物は `frontend/src/assets/spare_parts.png` と `assets/spare_parts.ico`。生成物はビルド時に作成し、Windowsビルド成功時にGitへ追加する。
 後者は16/24/32/48/64/128/256pxを含み、NuitkaがEXEのアイコンリソースに埋め込む。
 Windowsビルド成功時に生成物もGitへコミットする。
 
