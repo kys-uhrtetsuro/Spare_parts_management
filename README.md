@@ -64,42 +64,47 @@ Windowsビルド成功時に生成物もGitへコミットする。
 
 ## Windows EXE作成
 
-Windows向け配布は **Onefile単体EXEとStandalone一式の両方**を生成します。
+Windows配布は **Nuitka standalone方式のみ**です。依存ファイルを `src/` に集約し、ルートにはC製の小さな起動ランチャーを配置します。PyInstallerは使用しません。
 
 ~~~powershell
-./scripts/build_windows.ps1 -Both
+./scripts/build_windows.ps1
 ~~~
 
-ビルド成果物:
-- Onefile: `build/SparePartsManagement.exe`（1ファイルで配布）
-- Standalone: `build/launcher.dist/`（フォルダ全体を配布）
+ビルドにはWindows 64bit、Python 3.12、Node.js 24、MSVC（Visual Studio C++ Build Tools）が必要です。
 
-Onefileのみはオプションなし、Standaloneのみは `-Standalone` でもビルド可能。
-GitHub Actionsでは両方式を自動生成し、`releases/SparePartsManagement.exe` と
-`releases/SparePartsManagement-standalone.zip` に登録します。
-Git単一ファイルの制限を超える場合は、両方ともGitHub Releases資産として配布します。
-Django日本語翻訳リソースも両方式へ同梱し、起動時に日本語翻訳が見つからない問題を防ぎます。
+~~~text
+SparePartsManagement-package/
+├─ SparePartsManagement.exe       # 利用者が起動
+└─ src/
+   ├─ SparePartsManagement.exe    # Nuitka本体
+   ├─ *.dll / *.pyd
+   ├─ django/
+   ├─ frontend/
+   └─ assets/
+~~~
 
-Nuitkaとpywebviewの互換性によりpywebview 6.2を使用。
-Python、Node.jsは利用者PCへのインストール不要ですが、WebView2 Runtimeは必要です。
+ビルドは `build/SparePartsManagement-package/` を生成します。GitHub Actionsでは `releases/SparePartsManagement-standalone.zip` へまとめ、Git制限超過時はGitHub Releasesの添付ファイルとして配布します。
+Djangoの日本語翻訳リソースも同梱します。毎回の一時展開はありません。
+利用者PCにPythonやNode.jsは不要ですが、Microsoft Edge WebView2 Runtimeは必要です。
 
 ## 配布・バックアップ
 
-配布に必要なのは **`SparePartsManagement.exe` 1本**です。
-初回起動時にEXEと同じディレクトリへ `data/inventory.sqlite3` を
-**自動生成**し、Djangoのマイグレーションで必要なテーブルを作ります。
-既存DBがあればそのまま利用し、未適用のマイグレーションだけ実行します。
+ZIPを**全展開**し、外側の `SparePartsManagement.exe` を起動してください。`src/` のEXEやDLLだけ取り出してはいけません。
 
-Onefile起動時、アプリの画面・アイコン・依存ライブラリは一時フォルダへ展開します。
-**SQLiteは一時フォルダへ置きません**。EXEを差し替えてもDBと履歴は残ります。
+~~~text
+SparePartsManagement/
+├─ SparePartsManagement.exe
+├─ src/                       # 本体と依存ファイル
+└─ data/                      # 初回起動時に生成、以後維持
+   ├─ inventory.sqlite3
+   ├─ startup.log
+   └─ backups/
+~~~
 
-`data` にはSQLite以外に起動用の秘密鍵・ロックファイル・バックアップも置かれます。
-配布ZIP、Python、DLLなどをDBの隣へ置く必要はありません。
-`data` フォルダは削除・上書きせず残してください。
-「DBバックアップを作成」は `data/backups/` へ保存します。
-復元する際はアプリを終了してバックアップを `data/inventory.sqlite3` へコピーします。
-EXEが置かれたフォルダには書込権限が必要です。ネットワーク共有ドライブ上で
-SQLiteを運用したり、同じデータフォルダでEXEを同時起動したりしないでください。
+初回起動で外側のEXEと同じディレクトリに `data/inventory.sqlite3` が作られ、マイグレーションが実行されます。既存DB・履歴・SQLite内の秘密鍵はそのまま維持します。
+`data/` にはログ・単一起動ロック・バックアップも配置します。更新時は **dataフォルダを削除・上書きせず**、EXEとsrcを入れ替えてください。
+復元時はアプリを終了し、バックアップを `data/inventory.sqlite3` にコピーします。配布先フォルダの書込権限が必要です。
+ネットワーク共有上のSQLite運用や同一dataフォルダでの同時起動は避けてください。
 
 ## 開発方針・進捗
 
@@ -178,13 +183,8 @@ Windowsに以前のアイコンでタスクバーへピン留めしたショー�
 
 ## ブランチとWindows配布
 
-配布基準は `Release`。GitHub ActionsでOnefileとStandaloneを両方ビルドして、
-`releases/SparePartsManagement.exe` と
-`releases/SparePartsManagement-standalone.zip` に登録します。
-サイズ制限時は両方式をGitHub Releasesに登録します。
-どちらも同じ `data/inventory.sqlite3` で在庫・履歴を管理します。
-**更新時はEXEだけでなく、`data/` を残すこと**。
-StandaloneはZIPを全展開して使い、EXEだけ抜き出さないでください。
+配布基準は `Release`。GitHub ActionsでNuitka standalone ZIPのみをビルドし、`releases/SparePartsManagement-standalone.zip` に登録します。サイズ制限時はGitHub Releases資産として配布します。
+ルートのEXEと `src/` はセットです。更新時は `data/` を維持してください。
 
 ## 1部品に対する複数機器・部位の割当
 

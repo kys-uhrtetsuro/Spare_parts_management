@@ -15,7 +15,7 @@
 | 下限アラート一括設定 | 実装 | Django CI成功 | 未確認 |
 | 在庫一覧・Excel出力 | 実装 | Django CI成功 | 未確認 |
 | React / pywebview GUI | 実装 | Reactビルド・Playwright成功 | 未確認 |
-| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | 旧版standaloneは成功。機器・分類・品番引継ぎ修正版はWindowsビルド検証中 | 未確認 |
+| Nuitka Windows standalone | src集約＋Cランチャー実装 | Windowsビルド検証待ち | 未確認 |
 | DBバックアップ | 実装 | 実機未確認 | 未確認 |
 
 ## CI検証結果
@@ -187,3 +187,14 @@ Nexusとは独立したプロジェクトとして管理する。
 - 配布成果物ビルド元: 995db500979faf1ab55fbf263c9819f66aae5ddd
 - Onefile成果物: onefile-995db500979f / 42323456 bytes（Git制限超過時はGitHub Releases）
 
+
+
+## Standalone配布のsrc集約（2026-10-15）
+- [実装] Nuitka standalone本体と依存ファイルをZIPのsrcフォルダへ集約（PyInstallerは不採用）
+- [実装] 配布ルートにC製SparePartsManagement.exeを追加。src内のNuitka本体を子プロセスとして起動、両EXEにアイコンを埋込む
+- [実装] SPARES_APP_ROOTで永続データを外側のdata/inventory.sqlite3に固定。既存SQLite・ログ・ロック・バックアップを維持
+- [実装] CIの配布をstandalone ZIP一本に整理し、旧onefile EXEの新規配布を停止。Nuitkaコンパイルキャッシュは維持
+- [検証] Python単体テストでsrcとdataのパス分離および既存SQLite非上書きを確認
+- [検証待ち] GitHub ActionsでMSVCランチャーのビルド、アイコン、Django日本語リソース、ZIP配置
+- [実機確認待ち] pywebview起動、入出庫、SQLite既存データ、終了時のロックとセキュリティ製品の検知状況
+- [ブランチ] feature/standalone-src-launcher（ReleaseへPR反映）
