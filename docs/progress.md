@@ -103,7 +103,8 @@
 - [実装] 後継品の入庫前に旧品を使い切ったら旧品の監視設定を解除
 - [実装] 品番・型式が複数世代あっても末端まで追跡。履歴訂正・一括保存・Excel移植でも状態を正規化
 - [実装] 過去の設定もマイグレーション0006で整合性を修復
-- [検証中] Djangoテスト・React/Playwright・Windowsビルド。配布ZIP・Windows実機検証は引き続き必要
+- [検証済み] Djangoテスト・Reactビルド・Playwright操作テスト成功（CI 38683110833 / 38683115818）
+- [検証待ち] Windows Nuitkaビルド・配布ZIPのGit登録・Windows実機での動作確認
 
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功
