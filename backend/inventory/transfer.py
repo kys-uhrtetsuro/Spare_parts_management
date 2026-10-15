@@ -21,7 +21,8 @@ from .models import (
 )
 from .services import InputError, WRITE_LOCK, balances, text_field, reconcile_alert_lineage
 
-FORMAT = "SPARE_PARTS_SNAPSHOT_V2"
+FORMAT = "SPARE_PARTS_SNAPSHOT_V3"
+SUPPORTED_FORMATS = {"SPARE_PARTS_SNAPSHOT_V2", FORMAT}
 HEADERS = ("システム", "品番", "型式", "品名", "現在庫", "下限値", "警告")
 SCHEMAS = {
     "__manifest": ("key", "value"),
@@ -252,7 +253,7 @@ def read_snapshot(blob):
         raise InputError("Excelファイルを開けません") from exc
     try:
         manifest = dict((r["key"], r["value"]) for r in _table(book, "__manifest"))
-        if manifest.get("format") != FORMAT:
+        if manifest.get("format") not in SUPPORTED_FORMATS:
             raise InputError("このExcelは対応する移植形式ではありません")
 
         systems = _records(_table(book, "__systems"), "システム", columns=[("name", 120, True)])
@@ -299,21 +300,24 @@ def read_snapshot(blob):
             ]:
                 part[col] = optref(part.get(col), table, name)
 
-        placements = {}
+        placements = []
+        placement_keys = set()
         for item in _table(book, "__placements"):
             sid = optref(item.get("system_id"), systems, "システム")
             pid = optref(item.get("part_id"), parts, "部品")
             eid = optref(item.get("equipment_id"), equipment, "機器")
             sec = optref(item.get("section_id"), sections, "部位")
-            if (sid, pid) in placements:
-                raise InputError("機器割当が重複しています")
+            key = (sid, pid, eid, sec)
+            if key in placement_keys:
+                raise InputError("同一システム・部品・機器・部位の組み合わせが重複しています")
+            placement_keys.add(key)
             if sid is None or pid is None or eid is None:
                 raise InputError("機器割当の参照が不足しています")
             if equipment[eid]["system_id"] != sid:
                 raise InputError("割当機器の所属システムが一致しません")
             if sec is not None and sections[sec]["equipment_id"] != eid:
                 raise InputError("割当部位の所属機器が一致しません")
-            placements[(sid, pid)] = (eid, sec)
+            placements.append((sid, pid, eid, sec))
 
         # Topological order guards against circular and self-referential versions.
         sorted_parts = []
@@ -489,7 +493,7 @@ def apply_snapshot(payload, *, rename=None):
                 equipment_id=eq_map[eid],
                 section_id=section_map.get(section),
             )
-            for (sid, pid), (eid, section) in payload["placements"].items()
+            for sid, pid, eid, section in payload["placements"]
         ])
         new_rows = []
         for (sid, pid), qty in payload["stock"].items():

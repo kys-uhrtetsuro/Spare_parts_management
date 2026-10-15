@@ -74,7 +74,16 @@ class SystemPartPlacement(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["system", "part"], name="unique_part_placement_per_system"),
+            models.UniqueConstraint(
+                fields=["system", "part", "equipment", "section"],
+                condition=Q(section__isnull=False),
+                name="uniq_placement_section",
+            ),
+            models.UniqueConstraint(
+                fields=["system", "part", "equipment"],
+                condition=Q(section__isnull=True),
+                name="uniq_placement_no_section",
+            ),
         ]
 
 
