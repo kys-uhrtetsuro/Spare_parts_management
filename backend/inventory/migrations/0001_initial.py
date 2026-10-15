@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="SystemMaster",
             fields=[
-                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("name", models.CharField(max_length=120, unique=True, verbose_name="システム名")),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
             ],
@@ -19,7 +19,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="PartMaster",
             fields=[
-                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("part_number", models.CharField(max_length=160, verbose_name="品番")),
                 ("model_number", models.CharField(max_length=160, verbose_name="型式")),
                 ("name", models.CharField(max_length=250, verbose_name="品名")),
@@ -30,7 +30,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="PartVersion",
             fields=[
-                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("old_part_number", models.CharField(max_length=160)),
                 ("old_model_number", models.CharField(max_length=160)),
                 ("new_part_number", models.CharField(max_length=160)),
@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="StockHistory",
             fields=[
-                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("direction", models.CharField(choices=[("IN", "補充"), ("OUT", "使用")], max_length=3)),
                 ("quantity", models.PositiveIntegerField()),
                 ("company", models.CharField(max_length=160)),
@@ -61,7 +61,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="StockAlertSetting",
             fields=[
-                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("threshold", models.PositiveIntegerField()),
                 ("part", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="inventory.partmaster")),
                 ("system", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to="inventory.systemmaster")),
