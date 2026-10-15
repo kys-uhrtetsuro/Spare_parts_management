@@ -54,6 +54,27 @@ class NativeIconTests(unittest.TestCase):
                     else:
                         launcher.os.environ[key] = value
 
+    def test_database_migration_failure_is_written_to_startup_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with (
+                patch.object(launcher, "application_paths", return_value=directory),
+                patch.object(launcher, "single_instance", return_value=None),
+                patch("django.setup") as django_setup,
+                patch("django.core.management.call_command",
+                      side_effect=RuntimeError("migration-test-error")) as migrate,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "migration-test-error"):
+                    launcher.main()
+            django_setup.assert_called_once_with()
+            migrate.assert_called_once_with("migrate", interactive=False, verbosity=0)
+            log = (directory / "data" / "startup.log").read_text(encoding="utf-8")
+            self.assertIn("Django初期化完了", log)
+            self.assertIn("SQLiteマイグレーション開始", log)
+            self.assertNotIn("Waitress・pywebview読込開始", log)
+            self.assertIn("RuntimeError: migration-test-error", log)
+            self.assertFalse((directory / "data" / "inventory.sqlite3").exists())
+
     def test_icon_is_sent_to_pywebview_before_window_is_created(self):
         with tempfile.TemporaryDirectory() as tmp:
             icon = Path(tmp) / "assets" / "spare_parts.ico"
