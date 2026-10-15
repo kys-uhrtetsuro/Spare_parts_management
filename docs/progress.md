@@ -15,7 +15,7 @@
 | 下限アラート一括設定 | 実装 | Django CI成功 | 未確認 |
 | 在庫一覧・Excel出力 | 実装 | Django CI成功 | 未確認 |
 | React / pywebview GUI | 実装 | Reactビルド・Playwright成功 | 未確認 |
-| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | 旧版のstandaloneビルド成功。機器・分類・品番引継ぎ修正版のビルドを検証待ち | 未確認 |
+| Nuitka Windows standalone/onefile | ビルドスクリプト作成 | 旧版standaloneは成功。機器・分類・品番引継ぎ修正版はWindowsビルド検証中 | 未確認 |
 | DBバックアップ | 実装 | 実機未確認 | 未確認 |
 
 ## CI検証結果
@@ -41,6 +41,15 @@
 - 入出庫登録成功後にモーダルを閉じる。登録後の一覧再読込エラーを区別する
 - 部品検索候補は最大4件に絞り、全件検索はスクロール可能な一覧モーダルへ
 - Python/Djangoとブラウザの追加回帰テストに反映
+
+## 新旧型式と逆引きの検証
+- 品番のみ、型式のみ、両方同時の更新は後継レコードとして登録
+- 旧マスタを残し、旧品番・旧型式の履歴と在庫を別々に保持
+- 部品一覧・現在庫一覧から機器、部位、分類で絞り込み可
+- 機器・部位・分類マスタから関連部品一覧へ遷移可
+- 下限値とExcel出力は従来どおりシステム×部品単位
+- Linux Djangoテスト・Reactビルド・Playwrightは先行コミットで成功
+- 最新版Windows standalone配布ZIPのGit自動登録はビルド結果待ち
 
 ## mainマージ条件
 1. GitHub ActionsのPython・React CI成功

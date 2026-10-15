@@ -271,7 +271,7 @@ export default function App() {
       <div className="brand"><div className="brandmark">S</div><div><strong>SPARE PARTS</strong><small>予備品管理システム</small></div></div>
       <p className="nav-label">メニュー</p>
       <nav>{views.map(v => <button key={v.id} className={'navitem ' + (tab === v.id ? 'active' : '')} onClick={() => { setTab(v.id); setQuery(''); setError(''); setNotice('') }}>{v.label}</button>)}</nav>
-      <div className="sidebar-foot">LOCAL APPLICATION<br />SQLite / Django / React</div>
+      
     </aside>
     <main className="main">
       <div className="topbar">

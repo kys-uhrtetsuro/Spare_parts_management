@@ -8,3 +8,5 @@
 .part-search-row .button{flex-shrink:0}
 .part-picker-table{max-height:50vh;overflow-y:auto;margin-top:14px;border:1px solid #e5eaf2;border-radius:8px}
 .part-picker-table table{min-width:500px}
+
+.lineage-tag{display:block;color:#466687;font-size:11px;margin:2px 0;white-space:nowrap}
