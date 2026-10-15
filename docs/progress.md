@@ -23,7 +23,7 @@
 - React: TypeScript/Viteビルド成功
 - Django配信: ビルド済みReact index検証成功
 - Playwright: マスタ作成→補充→下限設定→ExcelダウンロードのE2E成功
-- Windows standalone: 旧版のコンパイルは成功。今回変更後のEXE生成とWebView2実機確認は未完了
+- Windows standalone: GitHub Actionsでコンパイル成功、配布ZIPをGitへ登録済み。GUI実機確認は未完了
 
 ## 追加要件（今回対応）
 - 履歴登録・訂正から企業名を廃止。既存DBは0002マイグレーションで列を削除
@@ -148,3 +148,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - リリース成果物はRelease/release配下ZIPに登録。配布用画像PNG/ICOもコミット。
 - ドキュメント更新のみは既存EXEのビルド結果を無効化しない。コード更新時は古い成果物を登録しない。
 - Release統合とWindows EXE実機起動は別途確認。
+
+- 配布成果物ビルド元: af35659c0cae7c8045978506ce0968fcf0ac2d14
+- EXEアイコン: gear / spare parts box（256〜16px、EXEに埋込み）
+
