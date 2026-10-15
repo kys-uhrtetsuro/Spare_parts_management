@@ -344,7 +344,7 @@ export default function App() {
         {!history.length && <p className="empty">まだ入出庫履歴がありません。</p>}
       </section>}
       {tab === 'parts' && <section className="panel"><div className="panel-head"><h2>部品マスタ</h2><span className="help">品番と型式の組み合わせは一意</span></div>
-        <div className="table-wrap"><table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>機器 / 部位</th><th>分類</th><th>旧品番</th><th>操作</th></tr></thead>
+        <div className="table-wrap"><table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>機器 / 部位</th><th>分類</th><th>新旧の対応</th><th>操作</th></tr></thead>
           <tbody>{filteredParts.map(p => <tr key={p.id}>
             <td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td>
             <td>{equipments.find(e => e.id === p.equipment_id)?.name ?? '—'}{p.section_id && <small> / {sections.find(x => x.id === p.section_id)?.name}</small>}</td>
@@ -354,7 +354,9 @@ export default function App() {
                 const prev = parts.find(x => x.id === p.previous_part_id)
                 return prev ? prev.part_number + ' / ' + prev.model_number : '—'
               })()}</span> : '—'}
-              {parts.some(x => x.previous_part_id === p.id) && <span className="lineage-tag">後継あり</span>}
+              {parts.filter(x => x.previous_part_id === p.id).map(next =>
+                <span className="lineage-tag" key={next.id}>次：{next.part_number} / {next.model_number}</span>
+              )}
             </td>
             <td><button className="button tiny secondary" onClick={() => openEditor(p)}>編集・後継登録</button></td>
           </tr>)}</tbody></table></div>
