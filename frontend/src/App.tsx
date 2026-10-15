@@ -635,7 +635,7 @@ export default function App() {
         <button className="button secondary" onClick={() => setPartPicker(false)}>閉じる</button>
       </div>
     </Modal>}
-    {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : editor.copyFrom ? '部品マスタのコピー登録' : '新規部品マスタ登録' onClose={() => setEditor(null)}>
+    {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : editor.copyFrom ? '部品マスタのコピー登録' : '新規部品マスタ登録'} onClose={() => setEditor(null)}>
       <p className="help">{editor.copyFrom ? '既存品の内容を複写しました。品番・型式は重複しない値へ変更して新規登録してください。元データや在庫は変更されません。' : '品番または型式を変更すると新しい後継部品を作ります。旧品番の在庫・入出庫履歴は旧レコードのまま保持し、自動移動しません。'}</p>
       <div className="form-grid">{([
         ['part_number', '品番'], ['model_number', '型式'], ['name', '品名'],
@@ -672,7 +672,7 @@ export default function App() {
       <label className="field">システム名<input autoFocus value={systemModal.name} onChange={e => setSystemModal(p => p && ({ ...p, name: e.target.value }))} /></label>
       <div className="dialog-actions"><button className="button secondary" onClick={() => setSystemModal(null)}>キャンセル</button><button className="button primary" disabled={busy} onClick={submitSystem}>保存する</button></div>
     </Modal>}
-    {equipmentModal && <Modal title={equipmentModal.id ? '機器マスタ編集' : equipmentModal.copy_from ? '機器マスタのコピー登録' : '機器マスタ登録' onClose={() => setEquipmentModal(null)}>
+    {equipmentModal && <Modal title={equipmentModal.id ? '機器マスタ編集' : equipmentModal.copy_from ? '機器マスタのコピー登録' : '機器マスタ登録'} onClose={() => setEquipmentModal(null)}>
       {equipmentModal.copy_from && <p className="help">登録先のシステムを選択してください。機器名・通称・配下の部位名をコピーし、元データは変更しません。部品割当はコピーしません。</p>}
       <div className="form-grid">
         {equipmentModal.copy_from && <label className="field wide">コピー先システム
