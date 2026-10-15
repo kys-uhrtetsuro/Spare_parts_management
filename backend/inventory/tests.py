@@ -452,6 +452,148 @@ class InventoryTests(TestCase):
         )
         self.assertEqual(invalid.status_code, 400)
 
+    def test_multiple_machines_and_sections_for_same_part_in_one_system(self):
+        machine_a = EquipmentMaster.objects.create(system=self.system, name="搬送A")
+        machine_b = EquipmentMaster.objects.create(system=self.system, name="搬送B")
+        section_1 = EquipmentSection.objects.create(equipment=machine_a, name="駆動部")
+        section_2 = EquipmentSection.objects.create(equipment=machine_a, name="センサ部")
+        section_3 = EquipmentSection.objects.create(equipment=machine_b, name="駆動部")
+        payload = {
+            "part_number": "MULTI100", "model_number": "M1", "name": "共通センサ",
+            "system_id": self.system.pk,
+            "placements": [
+                {"equipment_id": machine_a.pk, "section_id": section_1.pk},
+                {"equipment_id": machine_a.pk, "section_id": section_2.pk},
+                {"equipment_id": machine_b.pk, "section_id": section_3.pk},
+                {"equipment_id": machine_b.pk, "section_id": None},
+            ],
+        }
+        response = self.client.post("/api/parts", data=json.dumps(payload),
+                                    content_type="application/json")
+        self.assertEqual(response.status_code, 201, response.content)
+        part = PartMaster.objects.get(part_number="MULTI100")
+        actual = set(SystemPartPlacement.objects.filter(part=part).values_list(
+            "system_id", "equipment_id", "section_id"
+        ))
+        self.assertEqual(actual, {
+            (self.system.pk, machine_a.pk, section_1.pk),
+            (self.system.pk, machine_a.pk, section_2.pk),
+            (self.system.pk, machine_b.pk, section_3.pk),
+            (self.system.pk, machine_b.pk, None),
+        })
+        self.assertEqual(len(response.json()["item"]["placements"]), 4)
+        for equipment, section in [
+            (machine_a, section_1), (machine_a, section_2),
+            (machine_b, section_3),
+        ]:
+            filtered = self.client.get(
+                f"/api/parts?system={self.system.pk}&equipment={equipment.pk}&section={section.pk}"
+            )
+            self.assertIn(part.pk, [p["id"] for p in filtered.json()["items"]])
+        # Selecting one machine must not duplicate the part in the API result.
+        by_machine = self.client.get(f"/api/parts?equipment={machine_a.pk}")
+        self.assertEqual(sum(p["id"] == part.pk for p in by_machine.json()["items"]), 1)
+
+    def test_multi_placements_edit_replace_per_system_and_version_copies_all(self):
+        machine = EquipmentMaster.objects.create(system=self.system, name="CV")
+        sections = [
+            EquipmentSection.objects.create(equipment=machine, name=name)
+            for name in ("ローラー", "駆動", "光電")
+        ]
+        other_machine = EquipmentMaster.objects.create(system=self.other, name="CV")
+        SystemPartPlacement.objects.create(
+            system=self.other, part=self.part, equipment=other_machine
+        )
+        payload = {
+            "part_number": self.part.part_number, "model_number": self.part.model_number,
+            "name": self.part.name, "system_id": self.system.pk,
+            "placements": [
+                {"equipment_id": machine.pk, "section_id": sections[0].pk},
+                {"equipment_id": machine.pk, "section_id": sections[1].pk},
+            ],
+        }
+        change_part(self.part, payload)
+        self.assertEqual(self.part.placements.count(), 3)
+        change_part(self.part, {
+            **payload,
+            "placements": [{"equipment_id": machine.pk, "section_id": sections[2].pk}],
+        })
+        self.assertEqual(self.part.placements.count(), 2)
+        self.assertTrue(self.part.placements.filter(system=self.other, equipment=other_machine).exists())
+        successor = change_part(self.part, {
+            **payload,
+            "part_number": "MULTI200", "model_number": "V2",
+            "placements": [
+                {"equipment_id": machine.pk, "section_id": sections[0].pk},
+                {"equipment_id": machine.pk, "section_id": sections[1].pk},
+                {"equipment_id": machine.pk, "section_id": sections[2].pk},
+            ],
+        })
+        self.assertEqual(successor.placements.count(), 4)
+        self.assertTrue(self.part.placements.filter(
+            system=self.system, section=sections[2]
+        ).exists())
+        self.assertEqual(PartVersion.objects.filter(part=self.part).count(), 1)
+
+    def test_multi_assignment_rejects_duplicates_and_foreign_sections_atomically(self):
+        machine = EquipmentMaster.objects.create(system=self.system, name="検査機")
+        other_machine = EquipmentMaster.objects.create(system=self.other, name="検査機")
+        section = EquipmentSection.objects.create(equipment=machine, name="制御部")
+        base = {
+            "part_number": "ERROR100", "model_number": "V1", "name": "不正テスト",
+            "system_id": self.system.pk,
+        }
+        for entries in [
+            [{"equipment_id": machine.pk, "section_id": section.pk}] * 2,
+            [{"equipment_id": machine.pk}] * 2,
+            [{"equipment_id": other_machine.pk}],
+            [{"equipment_id": other_machine.pk, "section_id": section.pk}],
+            [{"equipment_id": machine.pk, "section_id": -1}],
+        ]:
+            response = self.client.post(
+                "/api/parts", content_type="application/json",
+                data=json.dumps({**base, "placements": entries}),
+            )
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertFalse(PartMaster.objects.filter(part_number="ERROR100").exists())
+
+    def test_excel_fork_preserves_multi_machine_placements_and_legacy_v2(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        machine = EquipmentMaster.objects.create(system=self.system, name="分岐機")
+        sections = [EquipmentSection.objects.create(equipment=machine, name=name)
+                    for name in ("入口", "出口")]
+        for sec in sections:
+            SystemPartPlacement.objects.create(
+                system=self.system, part=self.part, equipment=machine, section=sec
+            )
+        self.movement("IN", 7)
+        stream = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+        book = load_workbook(io.BytesIO(stream))
+        self.assertEqual(book["__manifest"]["B2"].value, "SPARE_PARTS_SNAPSHOT_V3")
+        self.assertEqual(book["__placements"].max_row, 3)
+        for label, content in (("複製V3", stream), ("複製V2", None)):
+            if content is None:
+                book["__manifest"]["B2"] = "SPARE_PARTS_SNAPSHOT_V2"
+                dest = io.BytesIO()
+                book.save(dest)
+                content = dest.getvalue()
+            result = self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile("部品移植.xlsx", content), "system_name": label,
+            })
+            self.assertEqual(result.status_code, 201, result.content)
+            new = SystemMaster.objects.get(name=label)
+            target = EquipmentMaster.objects.get(system=new, name="分岐機")
+            self.assertEqual(set(SystemPartPlacement.objects.filter(
+                system=new, part=self.part
+            ).values_list("equipment_id", "section__name")), {
+                (target.pk, "入口"), (target.pk, "出口"),
+            })
+            from .services import balance
+            self.assertEqual(balance(new.pk, self.part.pk), 7)
+
     def test_equipment_is_system_scoped_and_parts_shared(self):
         a = EquipmentMaster.objects.create(system=self.system, name="仕分設備")
         b = EquipmentMaster.objects.create(system=self.other, name="仕分設備")

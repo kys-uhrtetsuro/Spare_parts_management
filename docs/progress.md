@@ -115,6 +115,16 @@
 - [未対応・GitHub設定操作] リポジトリのdefault_branchは現在もmain。GitHubのSettings → General → Default branchでReleaseへ切替が必要。その後mainを削除すれば完全移行（この操作は接続中のGitHubツールでは非対応）
 - [未確認] ユーザーWindows PCでのWebView2起動・タスクバーアイコンの実機確認
 
+## 1部品への複数機器・部位割当
+- [実装] 中間モデル SystemPartPlacement の一意制約を「システム×部品×機器×部位」に変更
+- [実装] 同じ機器の部位違い、別機器、部位なしを複数行で登録・編集可能。完全重複は拒否
+- [実装] APIで `placements` 配列を検証し、旧形式の単一equipment_id/section_id指定も後方互換で受理
+- [実装] 部品の後継登録では全機器割当を引継ぎ、通常編集は選択中システムだけ更新
+- [実装] 部品マスタの一覧・逆引き・フィルター、および複数行を持つ編集モーダルを対応
+- [実装] Excel出力は複数の割当レコードを非表示シートに保持。V3で書き出し、V2/V3の取り込みをサポート
+- [検証待ち] Django、TypeScript、ブラウザE2E
+- [配布] 現在のRelease Windowsビルド実行を優先して、配布ビルドが完了するまで本機能のReleaseマージは保留
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

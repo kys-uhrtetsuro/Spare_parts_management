@@ -35,3 +35,9 @@
 .inline-filter{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap}
 .inline-filter input{width:auto;margin:0;accent-color:#3a81d1}
 .picker-filters{margin-bottom:12px}
+
+/* A part may be installed at several positions, even under the same machine. */
+.placement-edit-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:end;margin-top:10px}
+.placement-edit-row .field{min-width:0}
+.placement-edit-row>.button{margin-bottom:2px}
+@media(max-width:700px){.placement-edit-row{grid-template-columns:1fr}.placement-edit-row>.button{justify-self:start}}
