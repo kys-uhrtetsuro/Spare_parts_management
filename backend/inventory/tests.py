@@ -90,6 +90,48 @@ class InventoryTests(TestCase):
         self.assertEqual(ws["E2"].value, 0)
         self.assertEqual(ws["G2"].value, "下限以下")
 
+    def test_master_api_assigns_optional_equipment_and_category(self):
+        response = self.client.post(
+            "/api/equipment",
+            data=json.dumps({"name": "仕分設備", "alias": "ソータ"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        equipment_id = response.json()["item"]["id"]
+        section_response = self.client.post(
+            "/api/equipment/sections",
+            data=json.dumps({"equipment_id": equipment_id, "name": "搬送部"}),
+            content_type="application/json",
+        )
+        self.assertEqual(section_response.status_code, 201)
+        section_id = section_response.json()["item"]["id"]
+        category = self.client.post(
+            "/api/categories",
+            data=json.dumps({"name": "機械部品"}),
+            content_type="application/json",
+        ).json()["item"]["id"]
+        result = self.client.post(
+            "/api/parts",
+            data=json.dumps({
+                "part_number": "P200", "model_number": "V1", "name": "ローラー",
+                "equipment_id": equipment_id, "section_id": section_id,
+                "category_id": category,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(result.status_code, 201)
+        self.assertEqual(result.json()["item"]["section_id"], section_id)
+
+        invalid = self.client.post(
+            "/api/parts",
+            data=json.dumps({
+                "part_number": "P201", "model_number": "V1", "name": "ローラー",
+                "section_id": section_id,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid.status_code, 400)
+
     def test_api_csrf_and_validation(self):
         client = self.client_class(enforce_csrf_checks=True)
         denied = client.post("/api/history", data="{}", content_type="application/json")

@@ -123,9 +123,6 @@ def part_detail(request, pk):
 @endpoint(["GET"])
 def part_versions(request, pk):
     part = find_part(pk)
-    qs = part.versions.values(
-        "id", "old_part_number", "old_model_number", "new_part_number", "new_model_number", "changed_at"
-    )
     return JsonResponse({"items": list(qs)})
 
 

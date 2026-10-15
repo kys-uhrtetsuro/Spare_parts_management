@@ -13,10 +13,48 @@ class SystemMaster(models.Model):
         return self.name
 
 
+class EquipmentMaster(models.Model):
+    name = models.CharField("機器名", max_length=160, unique=True)
+    alias = models.CharField("機器通称", max_length=160, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+
+class EquipmentSection(models.Model):
+    equipment = models.ForeignKey(EquipmentMaster, on_delete=models.PROTECT, related_name="sections")
+    name = models.CharField("部位名", max_length=160)
+
+    class Meta:
+        ordering = ["equipment_id", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["equipment", "name"], name="unique_equipment_section")
+        ]
+
+
+class PartCategory(models.Model):
+    name = models.CharField("分類名", max_length=160, unique=True)
+
+    class Meta:
+        ordering = ["name"]
+
+
 class PartMaster(models.Model):
     part_number = models.CharField("品番", max_length=160)
     model_number = models.CharField("型式", max_length=160)
     name = models.CharField("品名", max_length=250)
+    previous_part = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="successors"
+    )
+    equipment = models.ForeignKey(
+        EquipmentMaster, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
+    )
+    section = models.ForeignKey(
+        EquipmentSection, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
+    )
+    category = models.ForeignKey(
+        PartCategory, on_delete=models.PROTECT, null=True, blank=True, related_name="parts"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

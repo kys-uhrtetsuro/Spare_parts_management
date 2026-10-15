@@ -5,7 +5,7 @@ from threading import RLock
 from django.db import IntegrityError, transaction
 from django.db.models import Case, F, IntegerField, Sum, When
 
-from .models import PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
 
 # This GUI operates one Django server per database. Serialize writes within the process.
 WRITE_LOCK = RLock()
@@ -167,21 +167,63 @@ def correct_movement(history_id, data):
     return reverse, revised
 
 
+def optional_fk(model, value, label):
+    if value in (None, ""):
+        return None
+    pk = positive_int(value, label)
+    if not model.objects.filter(pk=pk).exists():
+        raise InputError(f"{label}が存在しません")
+    return pk
+
+
+def part_assignments(data, original=None):
+    # Existing assignments remain intact if a legacy caller omits the keys.
+    equipment_id = optional_fk(
+        EquipmentMaster,
+        data.get("equipment_id", original.equipment_id if original else None), "機器"
+    )
+    section_id = optional_fk(
+        EquipmentSection,
+        data.get("section_id", original.section_id if original else None), "部位"
+    )
+    category_id = optional_fk(
+        PartCategory,
+        data.get("category_id", original.category_id if original else None), "分類"
+    )
+    if section_id is not None and (
+        equipment_id is None or not EquipmentSection.objects.filter(
+            pk=section_id, equipment_id=equipment_id
+        ).exists()
+    ):
+        raise InputError("部位と機器の組み合わせが一致していません")
+    return {"equipment_id": equipment_id, "section_id": section_id, "category_id": category_id}
+
+
 def change_part(part, data):
     new_number = text_field(data.get("part_number"), "品番", 160)
     new_model = text_field(data.get("model_number"), "型式", 160)
     new_name = text_field(data.get("name"), "品名", 250)
+    attributes = part_assignments(data, part)
     with WRITE_LOCK, transaction.atomic():
-        if (part.part_number, part.model_number) != (new_number, new_model):
-            PartVersion.objects.create(
-                part=part, old_part_number=part.part_number, old_model_number=part.model_number,
-                new_part_number=new_number, new_model_number=new_model,
-            )
-        part.part_number = new_number
-        part.model_number = new_model
-        part.name = new_name
-        part.save()
-    return part
+        if (part.part_number, part.model_number) == (new_number, new_model):
+            # Name/assignment edits do not change the identifier or stock history.
+            part.name = new_name
+            for field, value in attributes.items():
+                setattr(part, field, value)
+            part.save()
+            return part
+
+        # Upgrading an identifier creates a separate PartMaster. Never mutate the
+        # identifier attached to stock already registered under the old version.
+        successor = PartMaster.objects.create(
+            part_number=new_number, model_number=new_model, name=new_name,
+            previous_part=part, **attributes,
+        )
+        PartVersion.objects.create(
+            part=part, old_part_number=part.part_number, old_model_number=part.model_number,
+            new_part_number=successor.part_number, new_model_number=successor.model_number,
+        )
+        return successor
 
 
 def replace_alerts(system, items):
