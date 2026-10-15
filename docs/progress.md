@@ -14,7 +14,7 @@
 | マイナス在庫の禁止 | 実装 | Django CI成功 | 未確認 |
 | 下限アラート一括設定 | 実装 | Django CI成功 | 未確認 |
 | 在庫一覧・Excel出力 | 実装 | Django CI成功 | 未確認 |
-| React / pywebview GUI | 実装 | ReactビルドはDjango CI成功 | 未確認 |
+| React / pywebview GUI | 実装 | Reactビルド・Playwright成功 | 未確認 |
 | Nuitka Windows standalone/onefile | ビルドスクリプト作成 | GitHub Actionsビルド実行中 | 未確認 |
 | DBバックアップ | 実装 | 実機未確認 | 未確認 |
 
