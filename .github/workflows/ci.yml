@@ -105,3 +105,22 @@ jobs:
       - name: React UIのブラウザ操作を検証
         working-directory: frontend
         run: node scripts/smoke.mjs
+
+  windows-native-launcher:
+    runs-on: windows-latest
+    steps:
+      - name: ソース取得
+        uses: actions/checkout@v4
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: アイコン生成に必要なPillowを導入
+        run: python -m pip install Pillow==12.3.0
+      - name: アイコンを生成
+        run: python scripts/prepare_icon.py
+      - name: ネイティブランチャーをMSVCでコンパイル
+        shell: pwsh
+        run: ./scripts/build_native_launcher.ps1 -OutputFile build/native-check/SparePartsManagement.exe
+      - name: EXEのアイコン埋込を確認
+        run: python scripts/verify_windows_icon.py build/native-check/SparePartsManagement.exe
