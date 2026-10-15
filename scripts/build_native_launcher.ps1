@@ -14,14 +14,14 @@ if (-not (Test-Path "assets/spare_parts.ico" -PathType Leaf)) { throw "アプリ
 # Import the MSVC/Windows SDK compiler environment into this PowerShell process.
 # Avoid cmd.exe /s quote stripping when VsDevCmd.bat lives in Program Files.
 New-Item -ItemType Directory -Force -Path "build" | Out-Null
-$commandFile = "build/msvc-env.cmd"
+$commandFile = Join-Path (Get-Location).Path "build/msvc-env.cmd"
 $commands = @(
     '@echo off'
     ('call "{0}" -no_logo -arch=x64 -host_arch=x64 >nul || exit /b 1' -f $vsDevCmd)
     'set'
 )
 Set-Content -Path $commandFile -Value $commands -Encoding ascii
-$environment = & cmd.exe /d /c $commandFile
+$environment = & $commandFile
 if ($LASTEXITCODE -ne 0) { throw "MSVC環境の初期化に失敗しました" }
 foreach ($line in $environment) {
     if ($line -match '^([^=]+)=(.*)$') {
