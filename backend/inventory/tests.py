@@ -2,7 +2,7 @@ import io
 import json
 from django.test import TestCase
 
-from .models import PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
+from .models import EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion, StockAlertSetting, StockHistory, SystemMaster
 from .services import InputError, change_part, correct_movement, create_movement, inventory_rows, replace_alerts
 
 
