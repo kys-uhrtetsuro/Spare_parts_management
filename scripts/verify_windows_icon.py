@@ -10,7 +10,8 @@ def main():
     if sys.platform != "win32":
         raise RuntimeError("Windows only")
     executable = Path(sys.argv[1]).resolve()
-    ico = executable.parent / "assets" / "spare_parts.ico"
+    # For Onefile the icon is bundled into the executable, not next to it.
+    ico = Path(__file__).resolve().parents[1] / "assets" / "spare_parts.ico"
     if not executable.is_file() or not ico.is_file():
         raise FileNotFoundError(f"EXEまたはアイコンが見つかりません: {executable}, {ico}")
     with Image.open(ico) as image:

@@ -133,6 +133,16 @@
 - [検証済み] Djangoマイグレーション／回帰テスト・TypeScriptビルド・Playwright E2E成功（CI #38687272448 / #38687293404）
 - [統合済み] PR #3をReleaseへマージ（af35659c）。CIとWindows配布ビルドはReleaseの最新コミットで確認
 
+## Windows Onefileへの配布切替
+- [実装] Nuitka既定ビルドを`--mode=onefile`に変更。出力は`build/SparePartsManagement.exe`
+- [実装] Python・React・pywebview・ICOはEXE内部に含め、起動時の一時展開先から読み込む
+- [実装] SQLiteの保存先は`sys.argv[0]`（元EXEのパス）を基準とし`data/inventory.sqlite3`へ固定。無ければ自動作成し、既存DBは更新しない
+- [検証] 一時展開フォルダと永続DBフォルダのパスが別であること、既存DBが消えないことを単体テスト追加
+- [検証] Onefile EXEのWindowsアイコンリソースをビルド後に確認する
+- [実装] Actions成果物は単体EXE、Gitへ格納可能ならGitコミット。大きい場合はGitHub Releases資産として配布
+- [実装] 旧standalone ZIPは新しい成果物登録時に配布フォルダから削除する
+- [検証待ち] Windows実機Onefile起動、初回DB作成、EXE差替後のDB保持
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常

@@ -13,6 +13,47 @@ spec.loader.exec_module(launcher)
 
 
 class NativeIconTests(unittest.TestCase):
+
+    def test_onefile_paths_keep_sqlite_beside_original_executable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            unpacked = root / "temporary" / "onefile-extraction"
+            unpacked.mkdir(parents=True)
+            binary = root / "portable" / "SparePartsManagement.exe"
+            binary.parent.mkdir()
+            old_file = launcher.__file__
+            old_argv = list(launcher.sys.argv)
+            old_env = {
+                key: launcher.os.environ.get(key)
+                for key in ("SPARES_RESOURCE_DIR", "SPARES_DATA_DIR")
+            }
+            old_sys_path = list(launcher.sys.path)
+            try:
+                launcher.__file__ = str(unpacked / "launcher.py")
+                launcher.sys.argv = [str(binary)]
+                self.assertEqual(launcher.application_paths(), binary.parent)
+                self.assertEqual(
+                    Path(launcher.os.environ["SPARES_RESOURCE_DIR"]), unpacked
+                )
+                self.assertEqual(
+                    Path(launcher.os.environ["SPARES_DATA_DIR"]),
+                    binary.parent / "data",
+                )
+                db = binary.parent / "data" / "inventory.sqlite3"
+                db.parent.mkdir()
+                db.write_bytes(b"existing-sqlite-preserved")
+                launcher.application_paths()
+                self.assertEqual(db.read_bytes(), b"existing-sqlite-preserved")
+            finally:
+                launcher.__file__ = old_file
+                launcher.sys.argv = old_argv
+                launcher.sys.path[:] = old_sys_path
+                for key, value in old_env.items():
+                    if value is None:
+                        launcher.os.environ.pop(key, None)
+                    else:
+                        launcher.os.environ[key] = value
+
     def test_icon_is_sent_to_pywebview_before_window_is_created(self):
         with tempfile.TemporaryDirectory() as tmp:
             icon = Path(tmp) / "assets" / "spare_parts.ico"
