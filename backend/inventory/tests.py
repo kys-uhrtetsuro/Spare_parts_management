@@ -144,10 +144,12 @@ class InventoryTests(TestCase):
         self.part.category = category
         self.part.save()
         SystemPartPlacement.objects.create(system=self.system, part=self.part, equipment=machine, section=section)
+        # Before successor registration this is a normal movement. Afterwards
+        # the old stock must remain but no new movement may use that identifier.
+        self.movement("IN", 8)
         version = change_part(self.part, {
             "part_number": "P200", "model_number": "V2", "name": "センサ新",
         })
-        self.movement("IN", 8)
         self.movement("IN", 3, part=version)
         self.movement("OUT", 1, part=version)
         replace_alerts(self.system, [
