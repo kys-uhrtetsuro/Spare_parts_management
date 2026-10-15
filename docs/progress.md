@@ -106,6 +106,15 @@
 - [検証済み] Djangoテスト・Reactビルド・Playwright操作テスト成功（CI 38683110833 / 38683115818）
 - [検証待ち] Windows Nuitkaビルド・配布ZIPのGit登録・Windows実機での動作確認
 
+## ブランチ整理と配布準備（2026-10-15）
+- [完了] 旧mainからReleaseを作成し、PR #1をマージ（Release統合コミット a42817b7）
+- [完了] 以前のWindows Nuitka実行をキャンセルし、Releaseの最新コミットだけを対象にビルド
+- [完了] CIはReleaseへの統合コミットで成功（GitHub Actions 38684622907）
+- [実行中] Windows Nuitkaの最新ビルド（90分の上限、古いReleaseビルドは自動取消）
+- [配布待ち] 成功時にreleases/SparePartsManagement-standalone.zip、PNG/ICOをReleaseへ自動コミット
+- [未対応・GitHub設定操作] リポジトリのdefault_branchは現在もmain。GitHubのSettings → General → Default branchでReleaseへ切替が必要。その後mainを削除すれば完全移行（この操作は接続中のGitHubツールでは非対応）
+- [未確認] ユーザーWindows PCでのWebView2起動・タスクバーアイコンの実機確認
+
 ## Releaseマージ条件
 1. GitHub ActionsのPython・React CI成功
 2. Windowsのstandalone EXEが起動し、WebView2描画/入出庫/Excel保存が正常
