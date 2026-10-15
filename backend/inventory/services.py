@@ -128,6 +128,10 @@ def create_movement(data):
     operator = text_field(data.get("operator"), "登録者名", 160)
     note = text_field(data.get("note", ""), "備考", 400, required=False)
     with WRITE_LOCK, transaction.atomic():
+        # Do not allow registering new movements under a superseded identifier.
+        # Existing ledger corrections remain available for audit.
+        if PartMaster.objects.filter(previous_part_id=part.id).exists():
+            raise InputError("後継品がある旧品番・旧型式には新規入出庫できません。後継品を選択してください")
         if direction == StockHistory.OUT and balance(system.id, part.id) < quantity:
             raise InputError("在庫が不足しています。マイナス在庫になる登録はできません")
         obj = StockHistory.objects.create(
@@ -244,6 +248,8 @@ def change_part(part, data):
     new_name = text_field(data.get("name"), "品名", 250)
     category_id, system_id, equipment_id, section_id = part_assignments(data, part)
     with WRITE_LOCK, transaction.atomic():
+        if PartMaster.objects.filter(previous_part_id=part.pk).exists():
+            raise InputError("後継登録済みの旧品番・旧型式は編集できません")
         if (part.part_number, part.model_number) == (new_number, new_model):
             part.name = new_name
             part.category_id = category_id

@@ -31,3 +31,7 @@
 .nav-group[open] .nav-chevron{transform:rotate(180deg)}
 .nav-group-items{display:flex;flex-direction:column;gap:3px;padding:3px 7px 7px}
 .nav-group .navitem{padding:11px 13px;font-size:12px;width:100%}
+
+.inline-filter{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap}
+.inline-filter input{width:auto;margin:0;accent-color:#3a81d1}
+.picker-filters{margin-bottom:12px}

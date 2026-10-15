@@ -7,6 +7,7 @@ urlpatterns = [
     path("systems/<int:pk>", views.system_detail),
     path("equipment", views.equipment),
     path("equipment/<int:pk>", views.equipment_detail),
+    path("equipment/<int:pk>/copy", views.equipment_copy),
     path("equipment/sections", views.equipment_sections),
     path("equipment/sections/<int:pk>", views.equipment_section_detail),
     path("categories", views.categories),

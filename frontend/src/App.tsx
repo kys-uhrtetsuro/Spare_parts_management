@@ -6,7 +6,7 @@ type Equipment = { id: number; system_id: number; name: string; alias: string }
 type Section = { id: number; equipment_id: number; name: string }
 type Category = { id: number; name: string }
 type Placement = { system_id: number; equipment_id: number; section_id: number | null }
-type Part = { id: number; part_number: string; model_number: string; name: string; previous_part_id: number | null; category_id: number | null; placements: Placement[] }
+type Part = { id: number; part_number: string; model_number: string; name: string; previous_part_id: number | null; has_successor: boolean; category_id: number | null; placements: Placement[] }
 type Stock = { system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; quantity: number; threshold: number | null; alert: boolean; last_updated: string | null }
 type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
 type Alert = { part_id: number; threshold: number }
@@ -18,7 +18,7 @@ type ImportPreview = {
 }
 type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
 type PartForm = { part_number: string; model_number: string; name: string; system_id: string; equipment_id: string; section_id: string; category_id: string }
-type Editor = { mode: 'create' | 'edit'; partId?: number; values: PartForm }
+type Editor = { mode: 'create' | 'edit'; partId?: number; copyFrom?: number; values: PartForm }
 type MovementForm = { direction: 'IN' | 'OUT'; quantity: string; operator: string; note: string }
 const emptyPart: PartForm = { part_number: '', model_number: '', name: '', system_id: '', equipment_id: '', section_id: '', category_id: '' }
 function valuesFromPart(p: Part, systemId: string): PartForm {
@@ -116,7 +116,7 @@ export default function App() {
   const [editor, setEditor] = useState<Editor | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [systemModal, setSystemModal] = useState<{ id?: number; name: string } | null>(null)
-  const [equipmentModal, setEquipmentModal] = useState<{ id?: number; system_id: number; name: string; alias: string } | null>(null)
+  const [equipmentModal, setEquipmentModal] = useState<{ id?: number; copy_from?: number; system_id: number; name: string; alias: string } | null>(null)
   const [sectionModal, setSectionModal] = useState<{ id?: number; equipment_id: number; name: string } | null>(null)
   const [categoryModal, setCategoryModal] = useState<{ id?: number; name: string } | null>(null)
   const [movementModal, setMovementModal] = useState(false)
@@ -125,6 +125,10 @@ export default function App() {
   const [pickedPart, setPickedPart] = useState<Part | null>(null)
   const [partPicker, setPartPicker] = useState(false)
   const [pickerQuery, setPickerQuery] = useState('')
+  const [pickerEquipment, setPickerEquipment] = useState('')
+  const [pickerSection, setPickerSection] = useState('')
+  const [pickerCategory, setPickerCategory] = useState('')
+  const [excludeSuperseded, setExcludeSuperseded] = useState(true)
   const [lastOperator, setLastOperator] = useStoredValue('last-operator')
   const [movement, setMovement] = useState<MovementForm>({ direction: 'IN', quantity: '1', operator: '', note: '' })
   const [alertDraft, setAlertDraft] = useState<Record<number, string>>({})
@@ -183,6 +187,7 @@ export default function App() {
       )
   })
   const filteredParts = parts.filter(p =>
+    (!excludeSuperseded || !p.has_successor) &&
     matchesClassifications(p, selected) &&
     [p.part_number, p.model_number, p.name,
       ...p.placements.flatMap(a => [
@@ -203,12 +208,21 @@ export default function App() {
     setTab('parts')
   }
 
-  const candidates = partSearch.trim() ? parts.filter(x =>
+  const currentParts = parts.filter(x => !x.has_successor)
+  const pickerParts = currentParts.filter(p =>
+    label(p).toLocaleLowerCase().includes(pickerQuery.trim().toLocaleLowerCase()) &&
+    (!pickerCategory || String(p.category_id) === pickerCategory) &&
+    (!pickerEquipment && !pickerSection || p.placements.some(a =>
+      String(a.system_id) === selected &&
+      (!pickerEquipment || String(a.equipment_id) === pickerEquipment) &&
+      (!pickerSection || String(a.section_id) === pickerSection)))
+  )
+  const candidates = partSearch.trim() ? currentParts.filter(x =>
     [x.part_number, x.model_number, x.name].some(v => v.toLowerCase().includes(partSearch.trim().toLowerCase()))
   ).slice(0, 4) : []
   // Exactly matching unique part identifiers can be entered directly.
   // Ambiguous numbers must be selected from the candidates or the list.
-  const exactMatches = parts.filter(p => {
+  const exactMatches = currentParts.filter(p => {
     const input = partSearch.trim().toLocaleLowerCase()
     return Boolean(input) && (
       p.part_number.toLocaleLowerCase() === input ||
@@ -223,7 +237,7 @@ export default function App() {
   }
   const criticalCount = stocks.filter(x => x.alert).length
   const submitMovement = async () => {
-    if (!selected || !chosenPart) { setError('システムと部品を選択してください'); return }
+    if (!selected || !chosenPart || chosenPart.has_successor) { setError('現行品とシステムを選択してください'); return }
     const success = await act(() => api('history', 'POST', {
       system_id: Number(selected), part_id: chosenPart.id,
       direction: movement.direction, quantity: Number(movement.quantity),
@@ -242,7 +256,8 @@ export default function App() {
   const submitEquipment = async () => {
     if (!equipmentModal) return
     const success = await act(() => api(
-      equipmentModal.id ? 'equipment/' + equipmentModal.id : 'equipment',
+      equipmentModal.id ? 'equipment/' + equipmentModal.id :
+        equipmentModal.copy_from ? 'equipment/' + equipmentModal.copy_from + '/copy' : 'equipment',
       equipmentModal.id ? 'PUT' : 'POST',
       { name: equipmentModal.name, alias: equipmentModal.alias, system_id: equipmentModal.system_id },
     ), '機器マスタを保存しました')
@@ -338,6 +353,10 @@ export default function App() {
     setEditor({ mode: 'edit', partId: part.id, values: valuesFromPart(part, selected) })
     try { setVersions((await api<{ items: Version[] }>('parts/' + part.id + '/versions')).items) }
     catch (e) { setError(String(e)) }
+  }
+  const copyPart = (part: Part) => {
+    setVersions([])
+    setEditor({ mode: 'create', copyFrom: part.id, values: valuesFromPart(part, selected) })
   }
   const openNewPart = () => {
     setVersions([])
@@ -445,7 +464,10 @@ export default function App() {
           <tbody>{history.map(h => <tr key={h.id}><td className="nowrap">{dateTime(h.created_at)}</td><td>{h.system}</td><td>{h.part_number}<br/><small>{h.model_number}</small></td><td><span className={'chip ' + (h.direction === 'IN' ? 'ok' : 'neutral')}>{h.direction === 'IN' ? '補充' : '使用'}</span></td><td className="right quantity">{h.direction === 'IN' ? '+' : '−'}{h.quantity}</td><td>{h.operator}</td><td>{h.note}{h.reversal_of && <small> (取消レコード)</small>}</td><td>{!h.corrected && !h.reversal_of && <button className="button tiny secondary" onClick={() => openCorrection(h)}>訂正</button>}</td></tr>)}</tbody></table></div>
         {!history.length && <p className="empty">まだ入出庫履歴がありません。</p>}
       </section>}
-      {tab === 'parts' && <section className="panel"><div className="panel-head"><h2>部品マスタ</h2><span className="help">品番と型式の組み合わせは一意</span></div>
+      {tab === 'parts' && <section className="panel"><div className="panel-head"><h2>部品マスタ</h2><label className="inline-filter">
+          <input type="checkbox" checked={excludeSuperseded} onChange={e => setExcludeSuperseded(e.target.checked)} />
+          後継登録済みを除外
+        </label></div>
         <div className="table-wrap"><table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>機器 / 部位</th><th>分類</th><th>新旧の対応</th><th>操作</th></tr></thead>
           <tbody>{filteredParts.map(p => <tr key={p.id}>
             <td className="mono">{p.part_number}</td><td className="mono">{p.model_number}</td><td>{p.name}</td>
@@ -464,7 +486,11 @@ export default function App() {
                 <span className="lineage-tag" key={next.id}>次：{next.part_number} / {next.model_number}</span>
               )}
             </td>
-            <td><button className="button tiny secondary" onClick={() => openEditor(p)}>編集・後継登録</button></td>
+            <td><div className="master-card-actions">
+              {p.has_successor ? <span className="chip neutral">後継登録済み・編集不可</span> :
+                <button className="button tiny secondary" onClick={() => openEditor(p)}>編集・後継登録</button>}
+              <button className="button tiny secondary" onClick={() => copyPart(p)}>コピー</button>
+            </div></td>
           </tr>)}</tbody></table></div>
         {!filteredParts.length && <p className="empty">登録部品がありません。</p>}
       </section>}
@@ -477,6 +503,7 @@ export default function App() {
         <div className="system-grid">{equipments.filter(e => selected && String(e.system_id) === selected).map(e => <div className="system-card" key={e.id}>
           <strong>{e.name}</strong><small>システム：{systems.find(sys => sys.id === e.system_id)?.name}</small>{e.alias && <small>通称：{e.alias}</small>}
           <div className="master-card-actions"><button className="button tiny secondary" onClick={() => setEquipmentModal({ ...e })}>編集</button>
+          <button className="button tiny secondary" onClick={() => setEquipmentModal({ copy_from: e.id, system_id: Number(selected), name: e.name, alias: e.alias })}>コピー</button>
           <button className="button tiny secondary" onClick={() => viewMatchingParts(String(e.id))}>関連部品を見る</button>
           <button className="button tiny secondary" onClick={() => setSectionModal({ equipment_id: e.id, name: '' })}>＋ 部位を追加</button></div>
           {sections.filter(section => section.equipment_id === e.id).map(section =>
@@ -558,7 +585,10 @@ export default function App() {
         <div className="field wide">部品の検索・選択（品番・型式・品名）
           <div className="part-search-row">
             <input autoFocus aria-label="部品を直接入力して検索" value={partSearch} onChange={e => { setPartSearch(e.target.value); setPickedPart(null) }} placeholder="品番を直接入力、または候補から選択" />
-            <button className="button secondary" onClick={() => { setPickerQuery(''); setPartPicker(true) }}>一覧から選択</button>
+            <button className="button secondary" onClick={() => {
+              setPickerQuery(''); setPickerEquipment(''); setPickerSection(''); setPickerCategory('')
+              setPartPicker(true)
+            }}>一覧から選択</button>
           </div>
           {chosenPart ? <p className="selected-part">選択中：{label(chosenPart)}{!pickedPart && '（完全一致）'}</p> : <div className="suggestions">{candidates.map(p => <button key={p.id} onClick={() => choosePart(p)}>{label(p)}</button>)}<button className="create-suggestion" onClick={openNewPart}>＋ 未登録品を新規登録する</button></div>}
         </div>
@@ -569,22 +599,44 @@ export default function App() {
       <div className="dialog-actions"><button className="button secondary" onClick={() => setMovementModal(false)}>キャンセル</button><button className="button primary" disabled={busy || !chosenPart} onClick={submitMovement}>履歴を登録</button></div>
     </Modal>}
     {movementModal && partPicker && <Modal title="部品一覧から選択" onClose={() => setPartPicker(false)}>
-      <label className="field">品番・型式・品名で絞り込み
-        <input autoFocus value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} placeholder="一覧から部品を検索" />
-      </label>
+      <div className="form-grid picker-filters">
+        <label className="field wide">品番・型式・品名
+          <input autoFocus value={pickerQuery} onChange={e => setPickerQuery(e.target.value)} placeholder="一覧から部品を検索" />
+        </label>
+        <label className="field">機器
+          <select aria-label="選択画面の機器" value={pickerEquipment} onChange={e => { setPickerEquipment(e.target.value); setPickerSection('') }}>
+            <option value="">すべて</option>
+            {equipments.filter(e => String(e.system_id) === selected).map(e => <option key={e.id} value={e.id}>{e.name}{e.alias ? '（' + e.alias + '）' : ''}</option>)}
+          </select>
+        </label>
+        <label className="field">部位
+          <select aria-label="選択画面の部位" value={pickerSection} disabled={!pickerEquipment} onChange={e => setPickerSection(e.target.value)}>
+            <option value="">すべて</option>
+            {sections.filter(x => String(x.equipment_id) === pickerEquipment).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        </label>
+        <label className="field">分類
+          <select aria-label="選択画面の分類" value={pickerCategory} onChange={e => setPickerCategory(e.target.value)}>
+            <option value="">すべて</option>
+            {categories.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="table-wrap part-picker-table">
-        <table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>選択</th></tr></thead>
-          <tbody>{parts.filter(p => label(p).toLocaleLowerCase().includes(pickerQuery.toLocaleLowerCase())).map(p =>
+        <table><thead><tr><th>品番</th><th>型式</th><th>品名</th><th>分類</th><th>選択</th></tr></thead>
+          <tbody>{pickerParts.map(p =>
             <tr key={p.id}><td>{p.part_number}</td><td>{p.model_number}</td><td>{p.name}</td>
+              <td>{categories.find(c => c.id === p.category_id)?.name ?? '—'}</td>
               <td><button className="button tiny secondary" onClick={() => choosePart(p)}>選択</button></td></tr>)}</tbody>
         </table>
+        {!pickerParts.length && <p className="empty">条件に一致する現行品がありません。</p>}
       </div>
       <div className="dialog-actions">
         <button className="button secondary" onClick={() => setPartPicker(false)}>閉じる</button>
       </div>
     </Modal>}
-    {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : '新規部品マスタ登録'} onClose={() => setEditor(null)}>
-      <p className="help">品番または型式を変更すると新しい後継部品を作ります。旧品番の在庫・入出庫履歴は旧レコードのまま保持し、自動移動しません。</p>
+    {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : editor.copyFrom ? '部品マスタのコピー登録' : '新規部品マスタ登録' onClose={() => setEditor(null)}>
+      <p className="help">{editor.copyFrom ? '既存品の内容を複写しました。品番・型式は重複しない値へ変更して新規登録してください。元データや在庫は変更されません。' : '品番または型式を変更すると新しい後継部品を作ります。旧品番の在庫・入出庫履歴は旧レコードのまま保持し、自動移動しません。'}</p>
       <div className="form-grid">{([
         ['part_number', '品番'], ['model_number', '型式'], ['name', '品名'],
       ] as const).map(([key, title]) => <label className="field" key={key}>{title}<input value={editor.values[key]} onChange={e => setEditor(p => p && ({ ...p, values: { ...p.values, [key]: e.target.value } }))} /></label>)}
@@ -620,8 +672,14 @@ export default function App() {
       <label className="field">システム名<input autoFocus value={systemModal.name} onChange={e => setSystemModal(p => p && ({ ...p, name: e.target.value }))} /></label>
       <div className="dialog-actions"><button className="button secondary" onClick={() => setSystemModal(null)}>キャンセル</button><button className="button primary" disabled={busy} onClick={submitSystem}>保存する</button></div>
     </Modal>}
-    {equipmentModal && <Modal title={equipmentModal.id ? '機器マスタ編集' : '機器マスタ登録'} onClose={() => setEquipmentModal(null)}>
+    {equipmentModal && <Modal title={equipmentModal.id ? '機器マスタ編集' : equipmentModal.copy_from ? '機器マスタのコピー登録' : '機器マスタ登録' onClose={() => setEquipmentModal(null)}>
+      {equipmentModal.copy_from && <p className="help">登録先のシステムを選択してください。機器名・通称・配下の部位名をコピーし、元データは変更しません。部品割当はコピーしません。</p>}
       <div className="form-grid">
+        {equipmentModal.copy_from && <label className="field wide">コピー先システム
+          <select value={equipmentModal.system_id} onChange={e => setEquipmentModal(p => p && ({ ...p, system_id: Number(e.target.value) }))}>
+            {systems.map(sys => <option key={sys.id} value={sys.id}>{sys.name}</option>)}
+          </select>
+        </label>}
         <label className="field">機器名<input autoFocus value={equipmentModal.name} onChange={e => setEquipmentModal(p => p && ({ ...p, name: e.target.value }))} /></label>
         <label className="field">機器通称（任意）<input value={equipmentModal.alias} onChange={e => setEquipmentModal(p => p && ({ ...p, alias: e.target.value }))} /></label>
       </div>

@@ -7,7 +7,7 @@ from functools import wraps
 from pathlib import Path
 
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -50,7 +50,9 @@ def serialize_part(part):
     return {
         "id": part.id, "part_number": part.part_number,
         "model_number": part.model_number, "name": part.name,
-        "previous_part_id": part.previous_part_id, "category_id": part.category_id,
+        "previous_part_id": part.previous_part_id,
+        "has_successor": part.successors.exists(),
+        "category_id": part.category_id,
         "placements": [
             {"system_id": x.system_id, "equipment_id": x.equipment_id, "section_id": x.section_id}
             for x in part.placements.all()
@@ -122,6 +124,30 @@ def equipment_detail(request, pk):
     return JsonResponse({"item": {"id": item.pk, "system_id": item.system_id, "name": item.name, "alias": item.alias}})
 
 
+@endpoint(["POST"])
+def equipment_copy(request, pk):
+    """Create a separate equipment master with its section names in the target system."""
+    try:
+        source = EquipmentMaster.objects.get(pk=pk)
+    except EquipmentMaster.DoesNotExist:
+        raise InputError("コピー元の機器がありません") from None
+    data = body(request)
+    target = find_system(data.get("system_id"))
+    name = text_field(data.get("name"), "機器名", 160)
+    alias = text_field(data.get("alias", ""), "機器通称", 160, required=False)
+    with transaction.atomic():
+        new = EquipmentMaster.objects.create(system=target, name=name, alias=alias)
+        EquipmentSection.objects.bulk_create([
+            EquipmentSection(equipment=new, name=section.name)
+            for section in source.sections.order_by("id")
+        ])
+    # Part-to-equipment assignments are system-specific and deliberately not copied.
+    return JsonResponse({
+        "item": {"id": new.pk, "system_id": new.system_id, "name": new.name, "alias": new.alias},
+        "section_count": source.sections.count(),
+    }, status=201)
+
+
 @endpoint(["GET", "POST"])
 def equipment_sections(request):
     if request.method == "GET":
@@ -183,6 +209,8 @@ def parts(request):
         return JsonResponse({"item": serialize_part(p)}, status=201)
     query = request.GET.get("q", "").strip()
     qs = PartMaster.objects.all()
+    if request.GET.get("current_only") == "1":
+        qs = qs.filter(successors__isnull=True)
     category = request.GET.get("category")
     if category not in (None, ""):
         qs = qs.filter(category_id=positive_int(category, "分類"))

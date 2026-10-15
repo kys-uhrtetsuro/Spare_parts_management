@@ -354,6 +354,105 @@ class InventoryTests(TestCase):
         systems = [v["id"] for v in self.client.get("/api/systems").json()["items"]]
         self.assertEqual(systems, sorted(systems))
 
+    def test_superseded_parts_are_read_only_and_not_selectable_for_movements(self):
+        self.movement("IN", 4)
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "現行センサ",
+        })
+        # Masters remain accessible for auditing even if hidden by default.
+        self.assertEqual(PartMaster.objects.count(), 2)
+        active_ids = [row["id"] for row in self.client.get(
+            "/api/parts?current_only=1"
+        ).json()["items"]]
+        self.assertEqual(active_ids, [successor.pk])
+        self.assertEqual(len(self.client.get("/api/parts").json()["items"]), 2)
+        old_result = self.client.post(
+            "/api/history", content_type="application/json",
+            data=json.dumps({
+                "system_id": self.system.pk, "part_id": self.part.pk,
+                "direction": "IN", "quantity": 1, "operator": "担当者",
+            }),
+        )
+        self.assertEqual(old_result.status_code, 400)
+        self.assertIn("後継品", old_result.json()["error"])
+        with self.assertRaises(InputError):
+            self.movement("OUT", 1)
+        with self.assertRaises(InputError):
+            change_part(self.part, {
+                "part_number": "P100", "model_number": "V1", "name": "誤編集",
+            })
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.name, "センサ")
+        self.movement("IN", 2, part=successor)
+        self.assertEqual(StockHistory.objects.count(), 2)
+        self.assertEqual(
+            {r["part_number"]: r["quantity"] for r in inventory_rows()},
+            {"P100": 4, "P200": 2},
+        )
+        # Legacy history corrections remain permitted and cannot become negative.
+        original = StockHistory.objects.get(part=self.part)
+        correct_movement(original.id, {
+            "direction": "IN", "quantity": 3, "operator": "担当者",
+            "note": "旧レコード数量訂正",
+        })
+        old_stock = next(row for row in inventory_rows() if row["part_number"] == "P100")
+        self.assertEqual(old_stock["quantity"], 3)
+
+    def test_machine_copy_duplicates_sections_but_not_placement_or_stock(self):
+        origin = EquipmentMaster.objects.create(system=self.system, name="搬送機", alias="CV")
+        EquipmentSection.objects.create(equipment=origin, name="駆動部")
+        EquipmentSection.objects.create(equipment=origin, name="センサ部")
+        SystemPartPlacement.objects.create(system=self.system, part=self.part, equipment=origin)
+        self.movement("IN", 6)
+        response = self.client.post(
+            f"/api/equipment/{origin.pk}/copy",
+            content_type="application/json",
+            data=json.dumps({"system_id": self.other.pk, "name": "搬送機", "alias": "CV"}),
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        copied = EquipmentMaster.objects.get(pk=response.json()["item"]["id"])
+        self.assertEqual(copied.system_id, self.other.pk)
+        self.assertEqual(copied.alias, "CV")
+        self.assertEqual(
+            list(copied.sections.order_by("name").values_list("name", flat=True)),
+            ["センサ部", "駆動部"],
+        )
+        self.assertFalse(SystemPartPlacement.objects.filter(system=self.other).exists())
+        self.assertFalse(StockHistory.objects.filter(system=self.other).exists())
+        # Duplicate names must roll back both machine and its sections.
+        again = self.client.post(
+            f"/api/equipment/{origin.pk}/copy",
+            content_type="application/json",
+            data=json.dumps({"system_id": self.other.pk, "name": "搬送機", "alias": "CV"}),
+        )
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(EquipmentSection.objects.count(), 4)
+
+    def test_part_copy_is_not_a_successor_and_can_reuse_placements(self):
+        machine = EquipmentMaster.objects.create(system=self.system, name="CV")
+        section = EquipmentSection.objects.create(equipment=machine, name="駆動部")
+        category = PartCategory.objects.create(name="機械部品")
+        self.part.category = category
+        self.part.save()
+        SystemPartPlacement.objects.create(
+            system=self.system, part=self.part, equipment=machine, section=section,
+        )
+        response = self.client.post(
+            "/api/parts",
+            content_type="application/json",
+            data=json.dumps({
+                "part_number": "P101", "model_number": "V1", "name": self.part.name,
+                "system_id": self.system.pk, "equipment_id": machine.pk,
+                "section_id": section.pk, "category_id": category.pk,
+            }),
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        copied = PartMaster.objects.get(pk=response.json()["item"]["id"])
+        self.assertIsNone(copied.previous_part_id)
+        self.assertEqual(copied.category_id, category.pk)
+        self.assertEqual(SystemPartPlacement.objects.get(part=copied).section_id, section.pk)
+        self.assertEqual(StockHistory.objects.count(), 0)
+
     def test_api_csrf_and_validation(self):
         client = self.client_class(enforce_csrf_checks=True)
         denied = client.post("/api/history", data="{}", content_type="application/json")
