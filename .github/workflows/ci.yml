@@ -53,3 +53,15 @@ jobs:
           assert b"/assets/" in result.content
           print("React static delivery OK")
           PY
+
+      - name: Django DBを初期化
+        run: python backend/manage.py migrate --noinput
+      - name: Playwrightを一時導入
+        working-directory: frontend
+        run: npm install --no-save --package-lock=false playwright@1.63.0
+      - name: Chromiumを導入
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: React UIのブラウザ操作を検証
+        working-directory: frontend
+        run: node scripts/smoke.mjs
