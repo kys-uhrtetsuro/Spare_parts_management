@@ -87,6 +87,13 @@ try {
   await page.getByText('入出庫を記録しました').waitFor()
   await page.getByRole('dialog', { name: '入庫登録' }).waitFor({ state: 'hidden' })
   assert.equal(await page.getByRole('cell', { name: '5', exact: true }).count(), 1)
+  // Monitor P100 before replacing it. The threshold should follow the new part
+  // only after the newer version has stock.
+  await page.getByRole('button', { name: '下限アラート設定' }).click()
+  await page.locator('.pick-column').first().locator('.pick-item').first().click()
+  await page.locator('.configured input').first().fill('4')
+  await page.getByRole('button', { name: '設定を一括保存' }).click()
+  await page.getByText('下限アラートを一括保存しました').waitFor()
   // A new identifier must not rename the old stock row.
   await page.getByRole('button', { name: '部品マスタ' }).click()
   await page.getByRole('button', { name: '編集・後継登録' }).click()
@@ -100,6 +107,13 @@ try {
   await exclude.uncheck()
   assert.equal(await page.getByRole('cell', { name: 'P100', exact: true }).count(), 1)
   await page.getByText('後継登録済み・編集不可').waitFor()
+  await page.getByRole('button', { name: '下限アラート設定' }).click()
+  const previousAlert = page.locator('.configured .pick-item')
+  assert.equal(await previousAlert.count(), 1)
+  assert.equal(await previousAlert.locator('input').isDisabled(), true)
+  await previousAlert.getByText('P100 / V1').waitFor()
+  assert.equal(await page.locator('.pick-column').first().getByText('P100 / V1').count(), 0)
+  await page.getByRole('button', { name: '部品マスタ' }).click()
   const currentRow = page.getByRole('row').filter({
     has: page.getByRole('cell', { name: 'P200', exact: true }),
   })
@@ -163,8 +177,14 @@ try {
   await newStock.getByRole('cell', { name: '2', exact: true }).waitFor()
 
   await page.getByRole('button', { name: '下限アラート設定' }).click()
-  await page.locator('.pick-column').first().locator('.pick-item').first().click()
-  await page.locator('.configured input').first().fill('7')
+  // One alert, automatically moved P100 -> P200; the old part is not a new
+  // candidate and cannot cause a duplicate warning.
+  const configured = page.locator('.configured .pick-item')
+  await configured.getByText('P200 / V1').waitFor()
+  assert.equal(await configured.count(), 1)
+  assert.equal(await configured.locator('input').inputValue(), '4')
+  assert.equal(await page.locator('.pick-column').first().getByText('P100 / V1').count(), 0)
+  await configured.locator('input').fill('7')
   await page.getByRole('button', { name: '設定を一括保存' }).click()
   await page.getByText('下限アラートを一括保存しました').waitFor()
   await page.getByRole('button', { name: '現在在庫一覧' }).click()

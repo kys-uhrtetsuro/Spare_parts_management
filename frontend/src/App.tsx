@@ -148,13 +148,13 @@ export default function App() {
     setEquipments(e.items); setSections(f.items); setCategories(g.items)
   }, [selected])
   useEffect(() => { api('health').then(load).catch(e => setError(String(e))) }, [load])
-  useEffect(() => {
+  const refreshAlerts = useCallback(async () => {
     if (!selected) { setAlerts([]); setAlertDraft({}); return }
-    api<{ items: Alert[] }>('alerts?system=' + selected).then(result => {
-      setAlerts(result.items)
-      setAlertDraft(Object.fromEntries(result.items.map(a => [a.part_id, String(a.threshold)])))
-    }).catch(e => setError(String(e)))
+    const result = await api<{ items: Alert[] }>('alerts?system=' + selected)
+    setAlerts(result.items)
+    setAlertDraft(Object.fromEntries(result.items.map(a => [a.part_id, String(a.threshold)])))
   }, [selected])
+  useEffect(() => { refreshAlerts().catch(e => setError(String(e))) }, [refreshAlerts])
 
   const act = async (fn: () => Promise<unknown>, success: string) => {
     setError(''); setNotice(''); setBusy(true)
@@ -162,7 +162,7 @@ export default function App() {
       await fn()
       setNotice(success)
       // A refresh failure must never make a saved record look unsaved.
-      try { await load() } catch (refreshError) {
+      try { await Promise.all([load(), refreshAlerts()]) } catch (refreshError) {
         setError('保存しましたが一覧の再読込に失敗しました: ' + String(refreshError))
       }
       return true
@@ -246,6 +246,10 @@ export default function App() {
     setPartPicker(false)
   }
   const criticalCount = stocks.filter(x => x.alert).length
+  const eligibleAlertParts = parts.filter(p => !p.has_successor)
+  const eligibleAlertCount = eligibleAlertParts.filter(
+    p => !Object.hasOwn(alertDraft, p.id)
+  ).length
   const submitMovement = async () => {
     if (!selected || !chosenPart || (
       movement.direction === 'IN' ? chosenPart.has_successor : !chosenStock || chosenStock.quantity <= 0
@@ -312,11 +316,10 @@ export default function App() {
     if (!selected) return
     const items = Object.entries(alertDraft).map(([part_id, threshold]) => ({ part_id: Number(part_id), threshold: Number(threshold) }))
     if (items.some(i => !Number.isSafeInteger(i.threshold) || i.threshold < 1)) { setError('下限値は全て1以上の整数にしてください'); return }
-    const success = await act(
+    await act(
       () => api('alerts/bulk', 'POST', { system_id: Number(selected), items }),
       '下限アラートを一括保存しました',
     )
-    if (success) setAlerts(items)
   }
   const previewImport = async () => {
     if (!importFile) { setImportError('Excelファイルを指定してください'); return }
@@ -541,17 +544,17 @@ export default function App() {
           </div>
         </div>)}</div>{categories.length === 0 && <p className="empty">分類が未登録です。</p>}
       </section>}
-      {tab === 'alerts' && <section className="panel"><div className="panel-head"><h2>監視部品の選択</h2><span className="help">下限値は必ず1以上の整数 / 未設定は監視対象外</span></div>
+      {tab === 'alerts' && <section className="panel"><div className="panel-head"><h2>監視部品の選択</h2><span className="help">新規監視は現行品のみ。旧品の設定は後継品に在庫が入ると自動移行し、旧品の在庫がなくなれば解除します。</span></div>
         {!selected ? <p className="empty">設定するシステムを選択してください。</p> : <div className="pick-grid">
-          <div className="pick-column"><h3>未設定の部品 <span>{parts.length - Object.keys(alertDraft).length}件</span></h3>
+          <div className="pick-column"><h3>未設定の現行品 <span>{eligibleAlertCount}件</span></h3>
             <input className="full-input" placeholder="品番・型式・品名で検索" value={query} onChange={e => setQuery(e.target.value)} />
-            <div className="pick-list">{parts.filter(p => !Object.hasOwn(alertDraft, p.id) && label(p).toLowerCase().includes(query.toLowerCase())).map(p => <button key={p.id} className="pick-item" onClick={() => setAlertDraft(prev => ({ ...prev, [p.id]: '' }))}><span>{p.part_number} / {p.model_number}<small>{p.name}</small></span><b>＋</b></button>)}</div>
+            <div className="pick-list">{eligibleAlertParts.filter(p => !Object.hasOwn(alertDraft, p.id) && label(p).toLowerCase().includes(query.toLowerCase())).map(p => <button key={p.id} className="pick-item" onClick={() => setAlertDraft(prev => ({ ...prev, [p.id]: '' }))}><span>{p.part_number} / {p.model_number}<small>{p.name}</small></span><b>＋</b></button>)}</div>
           </div>
           <div className="pick-column"><h3>設定対象 <span>{Object.keys(alertDraft).length}件</span></h3>
             <div className="pick-list configured">{Object.entries(alertDraft).map(([id, threshold]) => {
               const p = parts.find(x => x.id === Number(id))
               if (!p) return null
-              return <div className="pick-item" key={id}><span>{p.part_number} / {p.model_number}<small>{p.name}</small></span><label>下限 <input type="number" min="1" step="1" value={threshold} onChange={e => setAlertDraft(prev => ({ ...prev, [id]: e.target.value }))} /></label><button className="remove" title="監視対象から除外" onClick={() => setAlertDraft(prev => { const next = { ...prev }; delete next[Number(id)]; return next })}>×</button></div>
+              return <div className="pick-item" key={id}><span>{p.part_number} / {p.model_number}<small>{p.name}{p.has_successor ? '（旧品：設定の変更不可・自動移行待ち）' : ''}</small></span><label>下限 <input type="number" min="1" step="1" disabled={p.has_successor} value={threshold} onChange={e => setAlertDraft(prev => ({ ...prev, [id]: e.target.value }))} /></label><button className="remove" title="監視対象から除外" onClick={() => setAlertDraft(prev => { const next = { ...prev }; delete next[Number(id)]; return next })}>×</button></div>
             })}</div>
           </div>
         </div>}

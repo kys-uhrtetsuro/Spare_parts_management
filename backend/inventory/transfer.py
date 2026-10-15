@@ -19,7 +19,7 @@ from .models import (
     EquipmentMaster, EquipmentSection, PartCategory, PartMaster, PartVersion,
     StockAlertSetting, StockHistory, StockImportBatch, SystemMaster, SystemPartPlacement,
 )
-from .services import InputError, WRITE_LOCK, balances, text_field
+from .services import InputError, WRITE_LOCK, balances, text_field, reconcile_alert_lineage
 
 FORMAT = "SPARE_PARTS_SNAPSHOT_V2"
 HEADERS = ("システム", "品番", "型式", "品名", "現在庫", "下限値", "警告")
@@ -511,6 +511,9 @@ def apply_snapshot(payload, *, rename=None):
             )
             for (sid, pid), value in payload["alerts"].items()
         ])
+        # Imported historical alert metadata must follow the same revision rule.
+        for new_system_id in system_map.values():
+            reconcile_alert_lineage(new_system_id)
         StockImportBatch.objects.create(
             checksum=payload["checksum"], system_count=len(system_map),
             opening_rows=len(new_rows),

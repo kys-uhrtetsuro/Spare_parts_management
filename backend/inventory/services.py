@@ -118,6 +118,79 @@ def inventory_rows(system_id=None, show_all=False):
     ))
 
 
+
+def reconcile_alert_lineage(system_id):
+    """Keep one meaningful alert per revision chain of each system.
+
+    A monitored obsolete part remains monitored while its stock is positive.
+    Once a newer version receives stock, move the existing threshold to that
+    revision without creating duplicate alerts. If the obsolete stock runs out
+    before its successor is stocked, drop the obsolete setting. An explicitly
+    configured current-part alert is never overwritten.
+    """
+    alerts = {
+        row.part_id: row for row in StockAlertSetting.objects.filter(system_id=system_id)
+    }
+    if not alerts:
+        return
+    parents = dict(PartMaster.objects.values_list("id", "previous_part_id"))
+    children = defaultdict(list)
+    for part_id, parent_id in parents.items():
+        if parent_id is not None:
+            children[parent_id].append(part_id)
+
+    def descendants(part_id):
+        result = []
+        pending = [(part_id, 0)]
+        seen = {part_id}
+        while pending:
+            current, depth = pending.pop()
+            for child in children.get(current, ()):
+                if child in seen:
+                    continue
+                seen.add(child)
+                result.append((depth + 1, child))
+                pending.append((child, depth + 1))
+        return sorted(result, reverse=True)
+
+    stocks = {
+        row["part_id"]: row["total"] or 0
+        for row in StockHistory.objects.filter(system_id=system_id)
+        .values("part_id").annotate(
+            total=Sum(Case(
+                When(direction=StockHistory.IN, then=F("quantity")),
+                default=-F("quantity"), output_field=IntegerField(),
+            ))
+        )
+    }
+    # Shallowest first: transfers to a terminal revision in one pass.
+    to_remove = set()
+    for old_id, alert in list(alerts.items()):
+        if old_id in to_remove:
+            continue
+        newer = descendants(old_id)
+        if not newer:
+            continue
+        # If a successor is already being monitored, its own threshold wins.
+        existing_newer = next((pid for _, pid in newer
+                               if pid in alerts and pid not in to_remove), None)
+        stocked_newer = next((pid for _, pid in newer if stocks.get(pid, 0) > 0), None)
+        target_id = existing_newer or stocked_newer
+        if target_id:
+            if target_id not in alerts:
+                new_alert = StockAlertSetting.objects.create(
+                    system_id=system_id, part_id=target_id, threshold=alert.threshold
+                )
+                alerts[target_id] = new_alert
+            to_remove.add(old_id)
+        elif stocks.get(old_id, 0) <= 0:
+            to_remove.add(old_id)
+    if to_remove:
+        StockAlertSetting.objects.filter(
+            system_id=system_id, part_id__in=to_remove
+        ).delete()
+
+
 def create_movement(data):
     system = find_system(data.get("system_id"))
     part = find_part(data.get("part_id"))
@@ -139,6 +212,7 @@ def create_movement(data):
             operator=operator, note=note,
             part_number_snapshot=part.part_number, model_number_snapshot=part.model_number,
         )
+        reconcile_alert_lineage(system.pk)
     return obj
 
 
@@ -181,6 +255,7 @@ def correct_movement(history_id, data):
             part_number_snapshot=original.part.part_number,
             model_number_snapshot=original.part.model_number,
         )
+        reconcile_alert_lineage(original.system_id)
     return reverse, revised
 
 
@@ -274,6 +349,10 @@ def change_part(part, data):
             part=part, old_part_number=part.part_number, old_model_number=part.model_number,
             new_part_number=successor.part_number, new_model_number=successor.model_number,
         )
+        for system_id in StockAlertSetting.objects.filter(part=part).values_list(
+            "system_id", flat=True
+        ).distinct():
+            reconcile_alert_lineage(system_id)
         return successor
 
 
@@ -292,9 +371,19 @@ def replace_alerts(system, items):
     if len(PartMaster.objects.filter(pk__in=parsed)) != len(parsed):
         raise InputError("存在しない部品が含まれます")
     with WRITE_LOCK, transaction.atomic():
+        existing = dict(StockAlertSetting.objects.filter(system=system).values_list(
+            "part_id", "threshold"
+        ))
+        obsolete = set(PartMaster.objects.filter(
+            pk__in=parsed, successors__isnull=False
+        ).values_list("pk", flat=True))
+        for pid in obsolete:
+            if existing.get(pid) != parsed[pid]:
+                raise InputError("後継登録済みの部品に下限アラートを新規設定・変更できません")
         StockAlertSetting.objects.filter(system=system).exclude(part_id__in=parsed).delete()
         for pid, value in parsed.items():
             StockAlertSetting.objects.update_or_create(
                 system=system, part_id=pid, defaults={"threshold": value}
             )
-    return len(parsed)
+        reconcile_alert_lineage(system.pk)
+    return StockAlertSetting.objects.filter(system=system).count()

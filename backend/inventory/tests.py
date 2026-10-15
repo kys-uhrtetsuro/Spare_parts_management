@@ -56,6 +56,132 @@ class InventoryTests(TestCase):
             replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 0}])
         self.assertEqual(StockAlertSetting.objects.get().threshold, 3)
 
+    def test_alert_remains_on_older_stock_then_transfers_on_successor_stock(self):
+        self.movement("IN", 5)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 3}])
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "更新品",
+        })
+        self.assertEqual(
+            list(StockAlertSetting.objects.values_list("part_id", "threshold")),
+            [(self.part.pk, 3)],
+        )
+        self.movement("OUT", 2)
+        self.assertEqual(
+            list(StockAlertSetting.objects.values_list("part_id", "threshold")),
+            [(self.part.pk, 3)],
+        )
+        self.movement("IN", 2, part=successor)
+        self.assertEqual(
+            list(StockAlertSetting.objects.values_list("part_id", "threshold")),
+            [(successor.pk, 3)],
+        )
+        old = next(row for row in inventory_rows(self.system.pk)
+                   if row["part_id"] == self.part.pk)
+        self.assertEqual((old["quantity"], old["threshold"]), (3, None))
+        new = next(row for row in inventory_rows(self.system.pk)
+                   if row["part_id"] == successor.pk)
+        self.assertEqual((new["quantity"], new["threshold"]), (2, 3))
+        self.assertEqual(StockAlertSetting.objects.count(), 1)
+
+    def test_obsolete_alert_drops_at_zero_without_successor_stock(self):
+        self.movement("IN", 2)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 3}])
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V1", "name": "現行品",
+        })
+        self.movement("OUT", 2)
+        self.assertFalse(StockAlertSetting.objects.exists())
+        self.assertFalse(inventory_rows(self.system.pk))
+        self.movement("IN", 1, part=successor)
+        self.assertFalse(StockAlertSetting.objects.exists())
+
+    def test_new_alert_for_obsolete_part_is_rejected_atomically(self):
+        self.movement("IN", 5)
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "新型",
+        })
+        replace_alerts(self.system, [{"part_id": successor.pk, "threshold": 4}])
+        with self.assertRaisesRegex(InputError, "後継登録済み"):
+            replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 2}])
+        self.assertEqual(
+            list(StockAlertSetting.objects.values_list("part_id", "threshold")),
+            [(successor.pk, 4)],
+        )
+        response = self.client.post(
+            "/api/alerts/bulk", content_type="application/json",
+            data=json.dumps({
+                "system_id": self.system.pk,
+                "items": [{"part_id": self.part.pk, "threshold": 2}],
+            }),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(StockAlertSetting.objects.get().part_id, successor.pk)
+
+    def test_existing_obsolete_alert_is_read_only_and_newer_explicit_wins(self):
+        self.movement("IN", 5)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 3}])
+        successor = change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "新型",
+        })
+        # Existing threshold can be included unchanged in an ordinary bulk save.
+        self.assertEqual(replace_alerts(
+            self.system, [{"part_id": self.part.pk, "threshold": 3}]
+        ), 1)
+        with self.assertRaisesRegex(InputError, "後継登録済み"):
+            replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 5}])
+        replace_alerts(self.system, [
+            {"part_id": self.part.pk, "threshold": 3},
+            {"part_id": successor.pk, "threshold": 6},
+        ])
+        self.assertEqual(
+            list(StockAlertSetting.objects.values_list("part_id", "threshold")),
+            [(successor.pk, 6)],
+        )
+
+    def test_alert_reconciliation_is_scoped_to_system_and_full_lineage(self):
+        self.movement("IN", 5)
+        self.movement("IN", 4, system=self.other)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 2}])
+        replace_alerts(self.other, [{"part_id": self.part.pk, "threshold": 9}])
+        middle = change_part(self.part, {
+            "part_number": "P100", "model_number": "V2", "name": "中間品",
+        })
+        latest = change_part(middle, {
+            "part_number": "P200", "model_number": "V3", "name": "現行品",
+        })
+        self.movement("IN", 3, part=latest)
+        self.assertEqual(
+            list(StockAlertSetting.objects.filter(system=self.system).values_list(
+                "part_id", "threshold"
+            )), [(latest.pk, 2)]
+        )
+        self.assertEqual(
+            list(StockAlertSetting.objects.filter(system=self.other).values_list(
+                "part_id", "threshold"
+            )), [(self.part.pk, 9)]
+        )
+        self.movement("IN", 1, part=latest, system=self.other)
+        self.assertEqual(
+            list(StockAlertSetting.objects.filter(system=self.other).values_list(
+                "part_id", "threshold"
+            )), [(latest.pk, 9)]
+        )
+
+    def test_correcting_old_history_to_zero_retires_old_alert(self):
+        initial = self.movement("IN", 2)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 3}])
+        change_part(self.part, {
+            "part_number": "P200", "model_number": "V2", "name": "新型",
+        })
+        correct_movement(initial.id, {
+            "direction": "IN", "quantity": 1, "operator": "担当者",
+            "note": "数量を1に訂正",
+        })
+        self.assertTrue(StockAlertSetting.objects.exists())
+        self.movement("OUT", 1)
+        self.assertFalse(StockAlertSetting.objects.exists())
+
     def test_successor_keeps_old_identifier_and_its_stock(self):
         old = self.movement("IN", 3)
         successor = change_part(self.part, {
