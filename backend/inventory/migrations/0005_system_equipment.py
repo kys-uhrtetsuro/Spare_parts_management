@@ -101,4 +101,16 @@ class Migration(migrations.Migration):
             model_name="systempartplacement",
             constraint=models.UniqueConstraint(fields=("system", "part"), name="unique_part_placement_per_system"),
         ),
+        migrations.AlterModelOptions(
+            name="equipmentmaster", options={"ordering": ["system_id", "name"]},
+        ),
+        migrations.AlterModelOptions(
+            name="partversion", options={"ordering": ["id"]},
+        ),
+        migrations.AlterModelOptions(
+            name="stockhistory", options={"ordering": ["id"]},
+        ),
+        migrations.AlterModelOptions(
+            name="stockimportbatch", options={"ordering": ["id"]},
+        ),
     ]
