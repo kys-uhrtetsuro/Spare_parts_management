@@ -64,23 +64,24 @@ Windowsビルド成功時に生成物もGitへコミットする。
 
 ## Windows EXE作成
 
-Windows PowerShell:
+Windows向け配布は **Onefile単体EXEとStandalone一式の両方**を生成します。
 
 ~~~powershell
-./scripts/build_windows.ps1
+./scripts/build_windows.ps1 -Both
 ~~~
 
-**Onefileが標準**で、`build/SparePartsManagement.exe` の1ファイルを生成します。
-Python・React・依存ライブラリ・アイコンを同梱しています。
-調査用standalone版を作る場合だけ `./scripts/build_windows.ps1 -Standalone` を使います。
-Windowsでは別途 Microsoft Edge WebView2 Runtime が必要です。
+ビルド成果物:
+- Onefile: `build/SparePartsManagement.exe`（1ファイルで配布）
+- Standalone: `build/launcher.dist/`（フォルダ全体を配布）
 
-GitHub ActionsではOnefile EXEを単体の成果物として提供し、
-90MiB以内なら `releases/SparePartsManagement.exe` にコミットします。
-Gitの容量制限を超える場合はGitHub ReleasesでEXEを直接配布します。
+Onefileのみはオプションなし、Standaloneのみは `-Standalone` でもビルド可能。
+GitHub Actionsでは両方式を自動生成し、`releases/SparePartsManagement.exe` と
+`releases/SparePartsManagement-standalone.zip` に登録します。
+Git単一ファイルの制限を超える場合は、両方ともGitHub Releases資産として配布します。
+Django日本語翻訳リソースも両方式へ同梱し、起動時に日本語翻訳が見つからない問題を防ぎます。
 
-Nuitka と pywebviewの互換性のため、pywebview 6.2 を採用しています。
-ブラウザではなく独立ウィンドウで起動し、Djangoは127.0.0.1だけで動作します。
+Nuitkaとpywebviewの互換性によりpywebview 6.2を使用。
+Python、Node.jsは利用者PCへのインストール不要ですが、WebView2 Runtimeは必要です。
 
 ## 配布・バックアップ
 
@@ -177,11 +178,13 @@ Windowsに以前のアイコンでタスクバーへピン留めしたショー�
 
 ## ブランチとWindows配布
 
-配布基準は `Release`。GitHub ActionsのWindowsビルドは
-`Release` 上のコード更新時にのみ動作し、古いビルドはキャンセルされます。
-成果物は `SparePartsManagement.exe` 単体で、90MiB以内ならGitへ登録し、
-それ以上ならGitHub Releasesへ登録します。
-SQLiteファイルはEXE外部の `data/inventory.sqlite3` に固定します。
+配布基準は `Release`。GitHub ActionsでOnefileとStandaloneを両方ビルドして、
+`releases/SparePartsManagement.exe` と
+`releases/SparePartsManagement-standalone.zip` に登録します。
+サイズ制限時は両方式をGitHub Releasesに登録します。
+どちらも同じ `data/inventory.sqlite3` で在庫・履歴を管理します。
+**更新時はEXEだけでなく、`data/` を残すこと**。
+StandaloneはZIPを全展開して使い、EXEだけ抜き出さないでください。
 
 ## 1部品に対する複数機器・部位の割当
 
