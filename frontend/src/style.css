@@ -41,3 +41,11 @@
 .placement-edit-row .field{min-width:0}
 .placement-edit-row>.button{margin-bottom:2px}
 @media(max-width:700px){.placement-edit-row{grid-template-columns:1fr}.placement-edit-row>.button{justify-self:start}}
+
+/* Keep unresolved stock warnings visible above filters and action messages. */
+.low-stock-notice{display:flex;align-items:center;justify-content:space-between;gap:18px;background:#fff2eb;border:1px solid #e8b699;border-left:5px solid #cc5c35;color:#803b23;padding:16px 20px;border-radius:10px;margin-bottom:20px}
+.low-stock-notice strong{display:block;font-size:15px}
+.low-stock-notice p{margin:5px 0 0;font-size:12px;line-height:1.5}
+.low-stock-notice .button{flex-shrink:0;border-color:#e8b699}
+.notification-toggle{font-size:12px}
+@media(max-width:880px){.low-stock-notice{align-items:flex-start;flex-direction:column}.low-stock-notice .button{align-self:flex-end}}

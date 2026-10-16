@@ -201,6 +201,11 @@ try {
   await configured.locator('input').fill('7')
   await page.getByRole('button', { name: '設定を一括保存' }).click()
   await page.getByText('下限アラートを一括保存しました').waitFor()
+  await page.locator('.low-stock-notice').getByText('下限在庫の警告：1件').waitFor()
+  await page.locator('.low-stock-notice').getByRole('button', { name: '下限在庫一覧を開く' }).click()
+  await page.getByRole('heading', { name: '下限在庫一覧' }).first().waitFor()
+  const lowStockRow = page.locator('main tbody tr').filter({ has: page.getByRole('cell', { name: 'P200', exact: true }) })
+  await lowStockRow.getByRole('cell', { name: '5', exact: true }).waitFor()
   await page.getByRole('button', { name: '現在在庫一覧' }).click()
   await page.getByText('下限以下').first().waitFor()
 

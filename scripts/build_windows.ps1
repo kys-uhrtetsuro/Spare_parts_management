@@ -24,7 +24,8 @@ $argsList = @(
     "--include-data-file=assets/spare_parts.ico=assets/spare_parts.ico",
     "--include-package=config", "--include-package=inventory", "--include-package=django",
     "--module-parameter=django-settings-module=config.settings",
-    "--include-package=waitress", "--include-package-data=webview",
+    "--include-package=waitress", "--include-package=windows_toasts",
+    "--include-package-data=webview",
     "--include-data-dir=$djangoLocale=django/conf/locale/ja",
     "--include-data-dir=frontend/dist=frontend/dist", "launcher.py"
 )

@@ -70,6 +70,26 @@ def set_windows_app_identity():
         raise OSError(f"Windowsタスクバーのアプリ識別子を設定できません: HRESULT {hresult:#x}")
 
 
+class DesktopNotificationBridge:
+    """Windows toast bridge, called from the React WebView page."""
+
+    def notify_low_stock(self, count):
+        if sys.platform != "win32" or type(count) is not int or not 1 <= count <= 100000:
+            return False
+        try:
+            from windows_toasts import Toast, WindowsToaster
+            message = Toast()
+            message.text_fields = [
+                "予備品管理システム：下限在庫",
+                f"{count}件の部品が下限値以下です。下限在庫一覧を確認してください。",
+            ]
+            WindowsToaster("予備品管理システム").show_toast(message)
+            return True
+        except Exception:
+            logging.getLogger("spares.startup").exception("Windows下限在庫通知に失敗")
+            return False
+
+
 def show_desktop(webview, url, resource_root):
     """pywebview 6.2 sets WinForms.Form.Icon before the native window is shown."""
     icon_path = icon_path_for(resource_root)
@@ -78,7 +98,8 @@ def show_desktop(webview, url, resource_root):
     # Save As dialog for Django's Content-Disposition: attachment responses.
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.create_window(
-        "予備品管理システム", url, width=1320, height=850, min_size=(900, 620)
+        "予備品管理システム", url, width=1320, height=850, min_size=(900, 620),
+        js_api=DesktopNotificationBridge()
     )
     webview.start(gui="edgechromium", icon=str(icon_path))
 
