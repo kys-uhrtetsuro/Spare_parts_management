@@ -240,8 +240,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [CI成功] 使用中の既存システムへの在庫加算、機器・割当重複防止、異なる部品IDの衝突防止、壊れたExcel内部参照の判別、既存のブラウザE2E導線（Run #38838109458）
 - [統合済み] bugfix/excel-fork-target-selection → Release（PR #14、6482d07e）
 
-- Standalone配布ビルド元: 6482d07e533d25f6873d5df1999f86666baeaf9e
-- Standalone配布ZIP: 65023317 bytes（Git制限超過時はGitHub Releases）
 
 
 ## Excel取り込み画面の単純化（2026-10-16）
@@ -251,3 +249,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [CI成功] Playwrightでファイル選択前の取り込み先表示、新規フォークと既存システムへの加算、プレビュー不要を確認（Run #38842288631）
 - [制約] Excelの非表示メタデータ参照不整合は引き続きサーバー検証で拒否し、入力画面内にエラーを表示。別途データ修復が必要
 - [統合済み] bugfix/simplify-excel-import-ui → Release（PR #15、0e5b775a）
+
+- Standalone配布ビルド元: 0e5b775aa526cfa0fbfc43f797224264c1f58604
+- Standalone配布ZIP: 65022874 bytes（Git制限超過時はGitHub Releases）
+
