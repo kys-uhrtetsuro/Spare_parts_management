@@ -36,6 +36,34 @@ SCHEMAS = {
     "__stocks": ("system_id", "part_id", "quantity"),
     "__alerts": ("system_id", "part_id", "threshold"),
 }
+# Human-readable headers for newly exported metadata. Internal dictionary
+# keys remain stable; older workbooks with physical-name headers still import.
+EXCEL_HEADERS = {
+    "__manifest": ("項目", "値"),
+    "__systems": ("システムID", "システム名"),
+    "__equipment": ("機器ID", "システムID", "機器名", "機器通称"),
+    "__sections": ("部位ID", "機器ID", "部位名"),
+    "__categories": ("分類ID", "分類名"),
+    "__parts": ("部品ID", "品番", "型式", "品名", "前版部品ID", "分類ID"),
+    "__placements": ("システムID", "部品ID", "機器ID", "部位ID"),
+    "__stocks": ("システムID", "部品ID", "在庫数"),
+    "__alerts": ("システムID", "部品ID", "下限値"),
+}
+SHEET_LABELS = {
+    "__manifest": "ファイル情報",
+    "__systems": "システム情報",
+    "__equipment": "機器情報",
+    "__sections": "部位情報",
+    "__categories": "分類情報",
+    "__parts": "部品情報",
+    "__placements": "部品割当情報",
+    "__stocks": "在庫情報",
+    "__alerts": "下限設定情報",
+}
+PART_FIELD_LABELS = {
+    "part_number": "品番", "model_number": "型式", "name": "品名",
+    "alias": "機器通称",
+}
 MAX_XLSX_BYTES = 10 * 1024 * 1024
 MAX_INFLATED_BYTES = 40 * 1024 * 1024
 MAX_ROWS = 10000
@@ -187,7 +215,7 @@ def write_snapshot(system_id=None, filters=None):
         }
         for sheetname, rows in sheets.items():
             ws = writer.book.create_sheet(sheetname)
-            ws.append(SCHEMAS[sheetname])
+            ws.append(EXCEL_HEADERS[sheetname])
             for row in rows:
                 ws.append(row)
                 for cell in ws[ws.max_row]:
@@ -204,16 +232,17 @@ def write_snapshot(system_id=None, filters=None):
 
 
 def _table(book, name):
+    label = SHEET_LABELS[name]
     if name not in book.sheetnames:
-        raise InputError(f"メタデータシート {name} がありません")
+        raise InputError(f"取り込み用の「{label}」シートがありません")
     ws = book[name]
     if ws.sheet_state == "visible":
-        raise InputError(f"メタデータシート {name} は非表示にしてください")
+        raise InputError(f"取り込み用の「{label}」シートは非表示にしてください")
     rows = ws.iter_rows(values_only=True)
     header = next(rows, ())
     expected = SCHEMAS[name]
-    if tuple(header[:len(expected)]) != expected:
-        raise InputError(f"{name} の列定義が異なります")
+    if tuple(header[:len(expected)]) not in (expected, EXCEL_HEADERS[name]):
+        raise InputError(f"「{label}」シートの見出しが異なります")
     results = []
     for n, row in enumerate(rows, 2):
         if n > MAX_ROWS:
@@ -221,7 +250,7 @@ def _table(book, name):
         if not any(v is not None for v in row):
             continue
         if len(row) > len(expected) and any(v is not None for v in row[len(expected):]):
-            raise InputError(f"{name} の余分な列を削除してください")
+            raise InputError(f"「{label}」シートの余分な列を削除してください")
         results.append(dict(zip(expected, row)))
     return results
 
@@ -233,8 +262,9 @@ def _records(rows, required_name, *, columns):
         if rid in mapping:
             raise InputError(f"{required_name} IDが重複しています")
         for name, length, mandatory in columns:
+            label = PART_FIELD_LABELS.get(name, f"{required_name}名")
             r[name] = text_field(r.get(name) if r.get(name) is not None else "",
-                                 f"{required_name} {name}", length, mandatory)
+                                 f"{required_name}の{label}", length, mandatory)
         mapping[rid] = r
     return mapping
 
@@ -263,7 +293,7 @@ def read_snapshot(blob):
         categories = _records(_table(book, "__categories"), "分類", columns=[("name", 160, True)])
         sections = _records(_table(book, "__sections"), "部位", columns=[("name", 160, True)])
         parts = _records(_table(book, "__parts"), "部品", columns=[
-            ("part_number", 160, True), ("model_number", 160, True),
+            ("part_number", 160, True), ("model_number", 160, False),
             ("name", 250, True),
         ])
         if not systems:
@@ -377,7 +407,9 @@ def read_snapshot(blob):
                 continue
             vals = dict(zip(HEADERS, row))
             sid = sys_by_name.get(vals.get("システム"))
-            pid = part_by_identity.get((vals.get("品番"), vals.get("型式")))
+            # An empty string in the export becomes an empty Excel cell (None).
+            model_number = "" if vals.get("型式") is None else vals["型式"]
+            pid = part_by_identity.get((vals.get("品番"), model_number))
             if sid is None or pid is None:
                 raise InputError(f"{rownum}行目のシステムまたは部品がメタデータと一致しません")
             pair = (sid, pid)
