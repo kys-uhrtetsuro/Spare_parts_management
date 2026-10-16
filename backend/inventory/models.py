@@ -45,7 +45,7 @@ class PartCategory(models.Model):
 
 class PartMaster(models.Model):
     part_number = models.CharField("品番", max_length=160)
-    model_number = models.CharField("型式", max_length=160)
+    model_number = models.CharField("型式", max_length=160, blank=True)
     name = models.CharField("品名", max_length=250)
     previous_part = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="successors"

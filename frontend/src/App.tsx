@@ -84,7 +84,7 @@ async function notifyDesktop(count: number) {
     })
   }
 }
-function label(p: Part) { return p.part_number + ' / ' + p.model_number + ' — ' + p.name }
+function label(p: Part) { return p.part_number + (p.model_number ? ' / ' + p.model_number : '') + ' — ' + p.name }
 function dateTime(v: string) { return new Date(v).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) }
 function useStoredValue(key: string) {
   const [value, setValue] = useState(() => localStorage.getItem(key) ?? '')
@@ -741,7 +741,7 @@ export default function App() {
     {editor && <Modal title={editor.mode === 'edit' ? '部品変更・品番/型式引継ぎ' : editor.copyFrom ? '部品マスタのコピー登録' : '新規部品マスタ登録'} onClose={() => setEditor(null)}>
       <p className="help">{editor.copyFrom ? '既存品の内容を複写しました。品番・型式は重複しない値へ変更して新規登録してください。元データや在庫は変更されません。' : '品番または型式を変更すると新しい後継部品を作ります。旧品番の在庫・入出庫履歴は旧レコードのまま保持し、自動移動しません。'}</p>
       <div className="form-grid">{([
-        ['part_number', '品番'], ['model_number', '型式'], ['name', '品名'],
+        ['part_number', '品番'], ['model_number', '型式（任意）'], ['name', '品名'],
       ] as const).map(([key, title]) => <label className="field" key={key}>{title}<input value={editor.values[key]} onChange={e => setEditor(p => p && ({ ...p, values: { ...p.values, [key]: e.target.value } }))} /></label>)}
         <label className="field">割当先システム（任意）
           <select aria-label="割当先システム（任意）" value={editor.values.system_id}

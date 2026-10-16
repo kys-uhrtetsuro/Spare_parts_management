@@ -33,7 +33,8 @@ def text_field(value, label, maximum, required=True):
         raise InputError(f"{label}が不正です")
     value = value.strip()
     if (required and not value) or len(value) > maximum:
-        raise InputError(f"{label}は1〜{maximum}文字で入力してください")
+        lower = 1 if required else 0
+        raise InputError(f"{label}は{lower}〜{maximum}文字で入力してください")
     return value
 
 
@@ -331,7 +332,7 @@ def save_placements(part, system_id, assignments):
 
 def create_part(data):
     number = text_field(data.get("part_number"), "品番", 160)
-    model = text_field(data.get("model_number"), "型式", 160)
+    model = text_field(data.get("model_number", ""), "型式", 160, required=False)
     name = text_field(data.get("name"), "品名", 250)
     category_id, system_id, assignments = part_assignments(data)
     with WRITE_LOCK, transaction.atomic():
@@ -344,7 +345,7 @@ def create_part(data):
 
 def change_part(part, data):
     new_number = text_field(data.get("part_number"), "品番", 160)
-    new_model = text_field(data.get("model_number"), "型式", 160)
+    new_model = text_field(data.get("model_number", ""), "型式", 160, required=False)
     new_name = text_field(data.get("name"), "品名", 250)
     category_id, system_id, assignments = part_assignments(data, part)
     with WRITE_LOCK, transaction.atomic():
