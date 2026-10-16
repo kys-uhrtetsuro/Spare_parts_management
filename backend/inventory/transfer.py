@@ -239,6 +239,31 @@ def write_snapshot(system_id=None, filters=None):
     return output.getvalue()
 
 
+def cell_value_label(value):
+    """Show the original Excel value without exposing internal field names."""
+    if value is None or value == "":
+        return "空欄"
+    kind = ("文字列" if isinstance(value, str)
+            else "真偽値" if isinstance(value, bool)
+            else "数値" if isinstance(value, (int, float))
+            else "その他")
+    readable = str(value).replace("\\r", "\\r").replace("\\n", "\\n")
+    if len(readable) > 80:
+        readable = readable[:80] + "…"
+    return f"「{readable}」（{kind}）"
+
+
+def cell_error(item, field, value, reason):
+    sheet = item["__sheet__"]
+    column = chr(65 + SCHEMAS[sheet].index(field))
+    row = item["__row__"]
+    label = EXCEL_HEADERS[sheet][SCHEMAS[sheet].index(field)]
+    return InputError(
+        f"「{SHEET_LABELS[sheet]}」シート {column}{row}（{label}）、"
+        f"入力値：{cell_value_label(value)}。{reason}"
+    )
+
+
 def _table(book, name):
     label = SHEET_LABELS[name]
     if name not in book.sheetnames:
@@ -259,7 +284,10 @@ def _table(book, name):
             continue
         if len(row) > len(expected) and any(v is not None for v in row[len(expected):]):
             raise InputError(f"「{label}」シートの余分な列を削除してください")
-        results.append(dict(zip(expected, row)))
+        record = dict(zip(expected, row))
+        record["__row__"] = n
+        record["__sheet__"] = name
+        results.append(record)
     return results
 
 
@@ -283,15 +311,23 @@ def excel_identifier(value, label, maximum, required=True):
 def _records(rows, required_name, *, columns):
     mapping = {}
     for r in rows:
-        rid = nonnegative(r.get("id"), f"{required_name} ID", allow_zero=False)
+        raw_id = r.get("id")
+        try:
+            rid = nonnegative(raw_id, f"{required_name}ID", allow_zero=False)
+        except InputError as exc:
+            raise cell_error(r, "id", raw_id, str(exc)) from exc
         if rid in mapping:
-            raise InputError(f"{required_name} IDが重複しています")
+            raise cell_error(r, "id", raw_id, f"{required_name}IDが重複しています")
         for name, length, mandatory in columns:
             label = FIELD_LABELS[(required_name, name)]
-            value = r.get(name) if r.get(name) is not None else ""
+            raw = r.get(name)
+            value = raw if raw is not None else ""
             validate = (excel_identifier if required_name == "部品"
                         and name in ("part_number", "model_number") else text_field)
-            r[name] = validate(value, label, length, mandatory)
+            try:
+                r[name] = validate(value, label, length, mandatory)
+            except InputError as exc:
+                raise cell_error(r, name, raw, str(exc)) from exc
         mapping[rid] = r
     return mapping
 
@@ -328,25 +364,33 @@ def read_snapshot(blob):
         if len({r["name"] for r in systems.values()}) != len(systems):
             raise InputError("システム名が重複しています")
 
-        def optref(value, mapping, label):
+        def optref(value, mapping, label, *, item=None, field=None):
             if value is None or value == "":
                 return None
-            rid = nonnegative(value, label, allow_zero=False)
+            try:
+                rid = nonnegative(value, label, allow_zero=False)
+            except InputError as exc:
+                if item is not None:
+                    raise cell_error(item, field, value, str(exc)) from exc
+                raise
             if rid not in mapping:
-                raise InputError(
+                reason = (
                     f"Excel内の参照先「{label}ID {rid}」が非表示メタデータに存在しません。"
                     "取り込み先DBのIDではなく、Excelファイル内部の参照不整合です。"
                 )
+                if item is not None:
+                    raise cell_error(item, field, value, reason)
+                raise InputError(reason)
             return rid
 
         for machine in equipment.values():
-            machine["system_id"] = optref(machine.get("system_id"), systems, "システム")
+            machine["system_id"] = optref(machine.get("system_id"), systems, "システム", item=machine, field="system_id")
             if machine["system_id"] is None:
                 raise InputError("機器にはシステムを指定してください")
         if len({(e["system_id"], e["name"]) for e in equipment.values()}) != len(equipment):
             raise InputError("同一システム内で機器名が重複しています")
         for section in sections.values():
-            section["equipment_id"] = optref(section.get("equipment_id"), equipment, "機器")
+            section["equipment_id"] = optref(section.get("equipment_id"), equipment, "機器", item=section, field="equipment_id")
             if section["equipment_id"] is None:
                 raise InputError("部位に機器が指定されていません")
         seen_identifiers = set()
@@ -358,15 +402,15 @@ def read_snapshot(blob):
             for col, table, name in [
                 ("previous_part_id", parts, "前版部品"), ("category_id", categories, "分類"),
             ]:
-                part[col] = optref(part.get(col), table, name)
+                part[col] = optref(part.get(col), table, name, item=part, field=col)
 
         placements = []
         placement_keys = set()
         for item in _table(book, "__placements"):
-            sid = optref(item.get("system_id"), systems, "システム")
-            pid = optref(item.get("part_id"), parts, "部品")
-            eid = optref(item.get("equipment_id"), equipment, "機器")
-            sec = optref(item.get("section_id"), sections, "部位")
+            sid = optref(item.get("system_id"), systems, "システム", item=item, field="system_id")
+            pid = optref(item.get("part_id"), parts, "部品", item=item, field="part_id")
+            eid = optref(item.get("equipment_id"), equipment, "機器", item=item, field="equipment_id")
+            sec = optref(item.get("section_id"), sections, "部位", item=item, field="section_id")
             key = (sid, pid, eid, sec)
             if key in placement_keys:
                 raise InputError("同一システム・部品・機器・部位の組み合わせが重複しています")
@@ -391,22 +435,30 @@ def read_snapshot(blob):
 
         hidden_stock = {}
         for item in _table(book, "__stocks"):
-            sid = optref(item.get("system_id"), systems, "システム")
-            pid = optref(item.get("part_id"), parts, "部品")
+            sid = optref(item.get("system_id"), systems, "システム", item=item, field="system_id")
+            pid = optref(item.get("part_id"), parts, "部品", item=item, field="part_id")
             if (sid, pid) in hidden_stock:
                 raise InputError("在庫のメタデータが重複しています")
-            hidden_stock[(sid, pid)] = nonnegative(item.get("quantity"), "在庫")
+            try:
+                hidden_stock[(sid, pid)] = nonnegative(item.get("quantity"), "在庫")
+            except InputError as exc:
+                raise cell_error(item, "quantity", item.get("quantity"), str(exc)) from exc
         expected_pairs = {(sid, pid) for sid in systems for pid in parts}
         if set(hidden_stock) != expected_pairs:
             raise InputError("在庫メタデータの参照が不足しています")
 
         hidden_alerts = {}
         for item in _table(book, "__alerts"):
-            sid = optref(item.get("system_id"), systems, "システム")
-            pid = optref(item.get("part_id"), parts, "部品")
+            sid = optref(item.get("system_id"), systems, "システム", item=item, field="system_id")
+            pid = optref(item.get("part_id"), parts, "部品", item=item, field="part_id")
             if (sid, pid) in hidden_alerts:
                 raise InputError("下限設定が重複しています")
-            hidden_alerts[(sid, pid)] = nonnegative(item.get("threshold"), "下限値", allow_zero=False)
+            try:
+                hidden_alerts[(sid, pid)] = nonnegative(
+                    item.get("threshold"), "下限値", allow_zero=False
+                )
+            except InputError as exc:
+                raise cell_error(item, "threshold", item.get("threshold"), str(exc)) from exc
 
         visible_expected = {
             pair for pair, qty in hidden_stock.items()
@@ -436,25 +488,60 @@ def read_snapshot(blob):
             sid = sys_by_name.get(vals.get("システム"))
             # An empty string in the export becomes an empty Excel cell (None).
             model_number = "" if vals.get("型式") is None else vals["型式"]
-            part_number = excel_identifier(
-                vals.get("品番"), f"{rownum}行目の品番", 160
-            )
-            model_number = excel_identifier(
-                model_number, f"{rownum}行目の型式", 160, False
-            )
+            try:
+                part_number = excel_identifier(
+                    vals.get("品番"), "品番", 160
+                )
+            except InputError as exc:
+                raise InputError(
+                    f"「現在庫」シート B{rownum}（品番）、"
+                    f"入力値：{cell_value_label(vals.get('品番'))}。{exc}"
+                ) from exc
+            try:
+                model_number = excel_identifier(
+                    model_number, "型式", 160, False
+                )
+            except InputError as exc:
+                raise InputError(
+                    f"「現在庫」シート C{rownum}（型式）、"
+                    f"入力値：{cell_value_label(vals.get('型式'))}。{exc}"
+                ) from exc
             pid = part_by_identity.get((part_number, model_number))
-            if sid is None or pid is None:
-                raise InputError(f"{rownum}行目のシステムまたは部品がメタデータと一致しません")
+            if sid is None:
+                raise InputError(
+                    f"「現在庫」シート A{rownum}（システム）、"
+                    f"入力値：{cell_value_label(vals.get('システム'))}。"
+                    "Excelのシステム情報と一致しません"
+                )
+            if pid is None:
+                raise InputError(
+                    f"「現在庫」シート B{rownum}・C{rownum}（品番・型式）、"
+                    f"入力値：{cell_value_label(vals.get('品番'))} / "
+                    f"{cell_value_label(vals.get('型式'))}。"
+                    "部品情報の品番・型式と一致しません（メタデータと一致しません）"
+                )
             pair = (sid, pid)
             if pair in shown or pair not in visible_expected:
                 raise InputError(f"{rownum}行目に重複・未登録の部品があります")
             if vals.get("品名") != safe_excel(parts[pid]["name"]):
                 raise InputError(f"{rownum}行目の品名がメタデータと一致しません")
             shown.add(pair)
-            final_stock[pair] = nonnegative(vals.get("現在庫"), "現在庫")
+            try:
+                final_stock[pair] = nonnegative(vals.get("現在庫"), "現在庫")
+            except InputError as exc:
+                raise InputError(
+                    f"「現在庫」シート E{rownum}（現在庫）、"
+                    f"入力値：{cell_value_label(vals.get('現在庫'))}。{exc}"
+                ) from exc
             alert = vals.get("下限値")
             if alert not in (None, ""):
-                final_alerts[pair] = nonnegative(alert, "下限値", allow_zero=False)
+                try:
+                    final_alerts[pair] = nonnegative(alert, "下限値", allow_zero=False)
+                except InputError as exc:
+                    raise InputError(
+                        f"「現在庫」シート F{rownum}（下限値）、"
+                        f"入力値：{cell_value_label(alert)}。{exc}"
+                    ) from exc
             else:
                 final_alerts.pop(pair, None)
         if shown != visible_expected:
