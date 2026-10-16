@@ -542,7 +542,8 @@ def apply_snapshot(payload, *, rename=None, target_system_id=None):
                     system_id=system_map[sid], part_id=part_id,
                     direction=StockHistory.IN, quantity=qty,
                     operator="Excel移行",
-                    note="Excel移植による期首在庫",
+                    note=("Excel取り込みによる在庫加算" if target_system_id is not None
+                          else "Excel移植による期首在庫"),
                     part_number_snapshot=part["part_number"],
                     model_number_snapshot=part["model_number"],
                 ))

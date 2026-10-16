@@ -419,7 +419,8 @@ export default function App() {
         importTarget === 'new' ? importRename : undefined,
         importTarget === 'new' ? undefined : Number(importTarget),
       )
-      setNotice(result.systems.join('、') + 'を取り込みました（期首在庫' + result.opening_rows + '件）')
+      setNotice(result.systems.join('、') + (importTarget === 'new'
+        ? 'を新規作成しました（期首在庫' : 'へ在庫を加算しました（対象') + result.opening_rows + '件）')
       setImportModal(false)
       setImportPreview(null)
       setImportFile(null)
@@ -669,7 +670,7 @@ export default function App() {
 
     {importModal && <Modal title="Excelからシステム・現在庫を取り込む" onClose={() => setImportModal(false)}>
       <p className="help">Excel出力で作ったファイルを選択してください。表示中の在庫数・下限値はExcel上で変更できます。
-        非表示シートの機器・部位・分類・部品情報を使って、対象システムと期首在庫を新規作成します。入出庫の過去履歴はコピーしません。</p>
+        非表示シートの機器・部位・分類・部品情報を使用します。新規システムの作成と、既存システムへの在庫加算に対応します。過去の入出庫履歴はコピーしません。</p>
       <div className="form-grid">
         <label className="field wide">Excelファイル（.xlsx）
           <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -683,7 +684,7 @@ export default function App() {
         <h3>取り込み内容の確認</h3>
         <p>システム：{importPreview.systems.join('、')}</p>
         <p>機器：{importPreview.equipment_count}件 / 部品：{importPreview.part_count}件 /
-          期首在庫：{importPreview.opening_rows}件（合計{importPreview.quantity_total}個） /
+          取り込み在庫：{importPreview.opening_rows}件（合計{importPreview.quantity_total}個） /
           下限設定：{importPreview.alert_count}件</p>
         {importPreview.already_imported && <p className="import-warning">このExcelは既に取り込み済みです。</p>}
         {importPreview.system_count === 1 && <>
