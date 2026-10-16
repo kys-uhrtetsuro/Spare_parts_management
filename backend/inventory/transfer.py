@@ -60,9 +60,15 @@ SHEET_LABELS = {
     "__stocks": "在庫情報",
     "__alerts": "下限設定情報",
 }
-PART_FIELD_LABELS = {
-    "part_number": "品番", "model_number": "型式", "name": "品名",
-    "alias": "機器通称",
+FIELD_LABELS = {
+    ("システム", "name"): "システム名",
+    ("機器", "name"): "機器名",
+    ("機器", "alias"): "機器通称",
+    ("分類", "name"): "分類名",
+    ("部位", "name"): "部位名",
+    ("部品", "part_number"): "品番",
+    ("部品", "model_number"): "型式",
+    ("部品", "name"): "品名",
 }
 MAX_XLSX_BYTES = 10 * 1024 * 1024
 MAX_INFLATED_BYTES = 40 * 1024 * 1024
@@ -234,7 +240,7 @@ def write_snapshot(system_id=None, filters=None):
 def _table(book, name):
     label = SHEET_LABELS[name]
     if name not in book.sheetnames:
-        raise InputError(f"取り込み用の「{label}」シートがありません")
+        raise InputError(f"取り込み用メタデータ「{label}」シートがありません")
     ws = book[name]
     if ws.sheet_state == "visible":
         raise InputError(f"取り込み用の「{label}」シートは非表示にしてください")
@@ -262,9 +268,9 @@ def _records(rows, required_name, *, columns):
         if rid in mapping:
             raise InputError(f"{required_name} IDが重複しています")
         for name, length, mandatory in columns:
-            label = PART_FIELD_LABELS.get(name, f"{required_name}名")
+            label = FIELD_LABELS[(required_name, name)]
             r[name] = text_field(r.get(name) if r.get(name) is not None else "",
-                                 f"{required_name}の{label}", length, mandatory)
+                                 label, length, mandatory)
         mapping[rid] = r
     return mapping
 

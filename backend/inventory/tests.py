@@ -562,6 +562,92 @@ class InventoryTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("メタデータ", resp.json()["error"])
 
+
+    def test_model_number_is_optional_and_identified_by_part_number(self):
+        """Empty model values match only when part numbers match too."""
+        from .services import create_part
+        first = create_part({"part_number": "NO-MODEL-A", "name": "抵抗"})
+        second = create_part({"part_number": "NO-MODEL-B", "model_number": "", "name": "センサ"})
+        self.assertEqual(first.model_number, "")
+        self.assertEqual(second.model_number, "")
+        self.assertNotEqual(first.pk, second.pk)
+        from django.db import IntegrityError
+        with self.assertRaises(IntegrityError):
+            create_part({"part_number": "NO-MODEL-A", "model_number": "", "name": "重複"})
+
+    def test_excel_blank_model_roundtrip_and_japanese_metadata_headers(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .services import create_part, balance
+        from .transfer import EXCEL_HEADERS
+        part_a = create_part({"part_number": "NONE-A", "name": "型式無しA"})
+        part_b = create_part({"part_number": "NONE-B", "model_number": "", "name": "型式無しB"})
+        self.movement("IN", 3, part=part_a)
+        self.movement("IN", 5, part=part_b)
+        blob = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+        book = load_workbook(io.BytesIO(blob))
+        self.assertEqual(
+            tuple(cell.value for cell in book["__parts"][1]),
+            EXCEL_HEADERS["__parts"],
+        )
+        self.assertEqual(book["__parts"]["C2"].value, None)
+        self.assertEqual(book["現在庫"]["C2"].value, None)
+        book.close()
+        response = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("型式無し.xlsx", blob),
+            "system_name": "型式無し部品の複製",
+        })
+        self.assertEqual(response.status_code, 201, response.content)
+        new_system = SystemMaster.objects.get(name="型式無し部品の複製")
+        self.assertEqual(balance(new_system.pk, part_a.pk), 3)
+        self.assertEqual(balance(new_system.pk, part_b.pk), 5)
+
+    def test_old_english_excel_headers_still_import_with_blank_model(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .services import create_part, balance
+        from .transfer import SCHEMAS
+        part = create_part({"part_number": "OLD-XLSX", "name": "旧形式"})
+        self.movement("IN", 2, part=part)
+        book = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        for sheet, headers in SCHEMAS.items():
+            ws = book[sheet]
+            for index, heading in enumerate(headers, 1):
+                ws.cell(1, index).value = heading
+        output = io.BytesIO()
+        book.save(output)
+        book.close()
+        response = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("旧英語見出し.xlsx", output.getvalue()),
+            "system_name": "旧見出し復元先",
+        })
+        self.assertEqual(response.status_code, 201, response.content)
+        target = SystemMaster.objects.get(name="旧見出し復元先")
+        self.assertEqual(balance(target.pk, part.pk), 2)
+
+    def test_model_number_excel_error_uses_japanese_label(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        self.movement("IN", 2)
+        book = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        book["__parts"]["C2"] = "x" * 161
+        result = io.BytesIO()
+        book.save(result)
+        book.close()
+        response = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("型式超過.xlsx", result.getvalue()),
+            "system_name": "エラーテスト",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("型式", response.json()["error"])
+        self.assertNotIn("model_number", response.json()["error"])
+
     def test_excel_includes_zero_when_alerted(self):
         replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 1}])
         response = self.client.get("/api/export")

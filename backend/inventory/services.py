@@ -33,7 +33,8 @@ def text_field(value, label, maximum, required=True):
         raise InputError(f"{label}が不正です")
     value = value.strip()
     if (required and not value) or len(value) > maximum:
-        raise InputError(f"{label}は1〜{maximum}文字で入力してください")
+        lower = 1 if required else 0
+        raise InputError(f"{label}は{lower}〜{maximum}文字で入力してください")
     return value
 
 
