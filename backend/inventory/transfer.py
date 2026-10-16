@@ -276,7 +276,10 @@ def read_snapshot(blob):
                 return None
             rid = nonnegative(value, label, allow_zero=False)
             if rid not in mapping:
-                raise InputError(f"参照先の{label}が見つかりません")
+                raise InputError(
+                    f"Excel内の参照先「{label}ID {rid}」が非表示メタデータに存在しません。"
+                    "取り込み先DBのIDではなく、Excelファイル内部の参照不整合です。"
+                )
             return rid
 
         for machine in equipment.values():
@@ -402,6 +405,11 @@ def read_snapshot(blob):
         book.close()
 
 
+def available_fork_targets():
+    """Any existing system can receive an additive import."""
+    return list(SystemMaster.objects.order_by("name", "pk").values("id", "name"))
+
+
 def preview_snapshot(payload):
     sysnames = [r["name"] for r in payload["systems"].values()]
     existing = set(SystemMaster.objects.filter(name__in=sysnames).values_list("name", flat=True))
@@ -417,11 +425,19 @@ def preview_snapshot(payload):
         "alert_count": len(payload["alerts"]),
         "conflicts": sorted(existing),
         "already_imported": duplicate,
+        "available_targets": available_fork_targets() if len(payload["systems"]) == 1 else [],
     }
 
 
-def apply_snapshot(payload, *, rename=None):
-    """Atomic, append-only fork. Never modifies a destination stock balance."""
+def apply_snapshot(payload, *, rename=None, target_system_id=None):
+    """Atomically fork into new systems or append records to an existing system."""
+    if target_system_id is not None:
+        from .services import positive_int
+        target_system_id = positive_int(target_system_id, "取り込み先システムID")
+        if rename is not None:
+            raise InputError("既存システムを選ぶ場合、新しいシステム名は指定できません")
+        if len(payload["systems"]) != 1:
+            raise InputError("既存システムへの取り込みは単一システムのExcelのみ対応します")
     if rename is not None:
         rename = text_field(rename, "移植先システム名", 120)
         if len(payload["systems"]) != 1:
@@ -433,24 +449,39 @@ def apply_snapshot(payload, *, rename=None):
     with WRITE_LOCK, transaction.atomic():
         if StockImportBatch.objects.filter(checksum=payload["checksum"]).exists():
             raise InputError("このExcelファイルは既に取り込まれています")
-        if SystemMaster.objects.filter(name__in=system_names.values()).exists():
-            raise InputError("同名システムがあります。取り込み先システム名を変更してください")
-
-        system_map = {
-            sid: SystemMaster.objects.create(name=name).pk
-            for sid, name in system_names.items()
-        }
+        if target_system_id is not None:
+            target = SystemMaster.objects.select_for_update().filter(pk=target_system_id).first()
+            if target is None:
+                raise InputError("取り込み先システムが存在しません")
+            source_id = next(iter(payload["systems"]))
+            system_map = {source_id: target.pk}
+            system_names = {source_id: target.name}
+        else:
+            if SystemMaster.objects.filter(name__in=system_names.values()).exists():
+                raise InputError("同名システムがあります。取り込み先システム名を変更してください")
+            system_map = {
+                sid: SystemMaster.objects.create(name=name).pk
+                for sid, name in system_names.items()
+            }
         eq_map = {}
         for src_id, obj in payload["equipment"].items():
-            equipment = EquipmentMaster.objects.create(
-                system_id=system_map[obj["system_id"]],
-                name=obj["name"], alias=obj["alias"],
+            destination_id = system_map[obj["system_id"]]
+            # Equipment IDs may differ between exported SQLite databases.
+            # Only coalesce records whose system, name AND alias agree.
+            equipment, created = EquipmentMaster.objects.get_or_create(
+                system_id=destination_id, name=obj["name"],
+                defaults={"alias": obj["alias"]},
             )
+            if not created and equipment.alias != obj["alias"]:
+                raise InputError(
+                    f"機器『{obj['name']}』の通称が既存データと異なります。"
+                    "異なる機器をIDだけで統合することはできません"
+                )
             eq_map[src_id] = equipment.pk
 
         section_map = {}
         for src_id, obj in payload["sections"].items():
-            section = EquipmentSection.objects.create(
+            section, _ = EquipmentSection.objects.get_or_create(
                 equipment_id=eq_map[obj["equipment_id"]], name=obj["name"],
             )
             section_map[src_id] = section.pk
@@ -487,14 +518,21 @@ def apply_snapshot(payload, *, rename=None):
                     new_model_number=obj["model_number"],
                 )
 
-        SystemPartPlacement.objects.bulk_create([
-            SystemPartPlacement(
-                system_id=system_map[sid], part_id=part_map[pid],
-                equipment_id=eq_map[eid],
-                section_id=section_map.get(section),
-            )
-            for sid, pid, eid, section in payload["placements"]
-        ])
+        existing_placements = set(
+            SystemPartPlacement.objects.filter(
+                system_id__in=system_map.values()
+            ).values_list("system_id", "part_id", "equipment_id", "section_id")
+        )
+        new_placements = []
+        for sid, pid, eid, section in payload["placements"]:
+            key = (system_map[sid], part_map[pid], eq_map[eid], section_map.get(section))
+            if key not in existing_placements:
+                new_placements.append(SystemPartPlacement(
+                    system_id=key[0], part_id=key[1],
+                    equipment_id=key[2], section_id=key[3],
+                ))
+                existing_placements.add(key)
+        SystemPartPlacement.objects.bulk_create(new_placements)
         new_rows = []
         for (sid, pid), qty in payload["stock"].items():
             if qty:
@@ -504,16 +542,24 @@ def apply_snapshot(payload, *, rename=None):
                     system_id=system_map[sid], part_id=part_id,
                     direction=StockHistory.IN, quantity=qty,
                     operator="Excel移行",
-                    note="Excel移植による期首在庫",
+                    note=("Excel取り込みによる在庫加算" if target_system_id is not None
+                          else "Excel移植による期首在庫"),
                     part_number_snapshot=part["part_number"],
                     model_number_snapshot=part["model_number"],
                 ))
         StockHistory.objects.bulk_create(new_rows)
+        # Thresholds are settings, not stock quantities: never add them.
+        # Preserve existing destination thresholds; add imported settings only
+        # for previously unmonitored parts.
+        current_alerts = set(StockAlertSetting.objects.filter(
+            system_id__in=system_map.values()
+        ).values_list("system_id", "part_id"))
         StockAlertSetting.objects.bulk_create([
             StockAlertSetting(
                 system_id=system_map[sid], part_id=part_map[pid], threshold=value,
             )
             for (sid, pid), value in payload["alerts"].items()
+            if (system_map[sid], part_map[pid]) not in current_alerts
         ])
         # Imported historical alert metadata must follow the same revision rule.
         for new_system_id in system_map.values():
