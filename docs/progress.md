@@ -227,8 +227,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [検証待ち] ReleaseでのWindows配布ビルドと、ユーザーWindows端末でのOSトースト通知（Windows通知設定の影響あり）
 - [統合済み] feature/low-stock-notifications → Release（PR #12、d4c1f2a4）
 
-- Standalone配布ビルド元: d4c1f2a49fc9944ababa3898f00dcc257d40b82a
-- Standalone配布ZIP: 65005535 bytes（Git制限超過時はGitHub Releases）
 
 
 ## Excelフォークの取り込み先選択と参照検証（2026-10-16）
@@ -241,3 +239,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [維持] 多システムExcelの一括新規フォーク、非表示参照検証、Excelファイル再取込防止、部品/分類の整合性検査、DBロールバック
 - [CI成功] 使用中の既存システムへの在庫加算、機器・割当重複防止、異なる部品IDの衝突防止、壊れたExcel内部参照の判別、既存のブラウザE2E導線（Run #38838109458）
 - [統合済み] bugfix/excel-fork-target-selection → Release（PR #14、6482d07e）
+
+- Standalone配布ビルド元: 6482d07e533d25f6873d5df1999f86666baeaf9e
+- Standalone配布ZIP: 65023317 bytes（Git制限超過時はGitHub Releases）
+
