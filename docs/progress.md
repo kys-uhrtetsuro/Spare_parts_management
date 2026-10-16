@@ -261,8 +261,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [テスト] 型式省略の新規登録・品番差異・Excel出力再取り込み・英語見出し互換・React UI登録を回帰検証
 - [統合済み] bugfix/optional-model-japanese-excel → Release（PR #16、63fc39f8、CI #38882825712成功）
 
-- Standalone配布ビルド元: 63fc39f8d3552a97323780308def760cee847be5
-- Standalone配布ZIP: 65036108 bytes（Git制限超過時はGitHub Releases）
 
 
 ## Excel品番・型式の数値セル正規化（2026-10-16）
@@ -286,3 +284,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [保護] 行の削除は数量0として扱い、既存システムの数量削減・履歴削除は実施しない（既存システムへの取り込みは入庫加算方式）
 - [検証] V4シート構成、旧V2/V3・英語見出し互換、__stocks/__alerts不一致無視、行追加・削除、既存在庫加算、重複防止をテスト
 - [統合済み] PR #17へ集約しRelease反映（0ca2eb6a、CI #38890102216成功）
+
+- Standalone配布ビルド元: 0ca2eb6a73f44d44e424135b3810bd571479061f
+- Standalone配布ZIP: 65061161 bytes（Git制限超過時はGitHub Releases）
+
