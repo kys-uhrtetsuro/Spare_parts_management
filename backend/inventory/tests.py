@@ -806,7 +806,8 @@ class InventoryTests(TestCase):
             "system_name": "別システム",
         })
         self.assertEqual(response.status_code, 400)
-        self.assertIn("メタデータと一致しません", response.json()["error"])
+        self.assertIn("先頭ゼロ", response.json()["error"])
+        self.assertIn("B2", response.json()["error"])
         self.assertFalse(SystemMaster.objects.filter(name="別システム").exists())
 
 
