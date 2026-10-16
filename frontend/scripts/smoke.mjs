@@ -22,7 +22,10 @@ try {
   await page.goto('http://127.0.0.1:8000/')
   const logo = page.locator('.brandmark img')
   await logo.waitFor()
-  assert.equal(await logo.evaluate(img => img.naturalWidth > 0), true)
+  await page.waitForFunction(() => {
+    const img = document.querySelector('.brandmark img')
+    return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0
+  })
   const favicon = await page.request.get('http://127.0.0.1:8000/favicon.ico')
   assert.equal(favicon.status(), 200)
   assert.equal(await page.getByText('ローカル運用').count(), 0)
