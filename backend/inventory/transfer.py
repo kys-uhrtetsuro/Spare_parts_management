@@ -23,8 +23,8 @@ from .models import (
 )
 from .services import InputError, WRITE_LOCK, balances, text_field, reconcile_alert_lineage
 
-FORMAT = "SPARE_PARTS_SNAPSHOT_V3"
-SUPPORTED_FORMATS = {"SPARE_PARTS_SNAPSHOT_V2", FORMAT}
+FORMAT = "SPARE_PARTS_SNAPSHOT_V4"
+SUPPORTED_FORMATS = {"SPARE_PARTS_SNAPSHOT_V2", "SPARE_PARTS_SNAPSHOT_V3", FORMAT}
 HEADERS = ("システム", "品番", "型式", "品名", "現在庫", "下限値", "警告")
 SCHEMAS = {
     "__manifest": ("key", "value"),
@@ -35,6 +35,8 @@ SCHEMAS = {
     "__parts": ("id", "part_number", "model_number", "name",
                 "previous_part_id", "category_id"),
     "__placements": ("system_id", "part_id", "equipment_id", "section_id"),
+    # The following definitions are legacy only (V2/V3).
+    # V4 does not export or use them, but older workbooks may contain them.
     "__stocks": ("system_id", "part_id", "quantity"),
     "__alerts": ("system_id", "part_id", "threshold"),
 }
@@ -177,16 +179,14 @@ def write_snapshot(system_id=None, filters=None):
     threshold_map = {(a.system_id, a.part_id): a.threshold for a in alerts}
     part_map = {p.id: p for p in parts}
     sys_map = {s.id: s.name for s in systems}
-    # Export visible rows only with stock>0 or an active alert; hidden sheets carry
-    # all referenced masters including old zero-stock identifiers.
+    # Only the visible sheet contains stock quantities and alert thresholds.
+    # Hidden sheets contain metadata for restoring equipment and part lineage.
     visible = []
-    hidden_stocks = []
     for sid in sorted(system_ids):
         for pid in sorted(part_ids):
             enabled = (sid, pid) in stock_pairs
             qty = stock.get((sid, pid), 0) if enabled else 0
             threshold = threshold_map.get((sid, pid)) if enabled else None
-            hidden_stocks.append((sid, pid, qty))
             if qty > 0 or threshold is not None:
                 p = part_map[pid]
                 visible.append({
@@ -218,8 +218,6 @@ def write_snapshot(system_id=None, filters=None):
             "__placements": [
                 (p.system_id, p.part_id, p.equipment_id, p.section_id) for p in placements
             ],
-            "__stocks": hidden_stocks,
-            "__alerts": [(a.system_id, a.part_id, a.threshold) for a in alerts],
         }
         for sheetname, rows in sheets.items():
             ws = writer.book.create_sheet(sheetname)
@@ -433,37 +431,9 @@ def read_snapshot(blob):
             sorted_parts.extend(ready)
             pending.difference_update(ready)
 
-        hidden_stock = {}
-        for item in _table(book, "__stocks"):
-            sid = optref(item.get("system_id"), systems, "システム", item=item, field="system_id")
-            pid = optref(item.get("part_id"), parts, "部品", item=item, field="part_id")
-            if (sid, pid) in hidden_stock:
-                raise InputError("在庫のメタデータが重複しています")
-            try:
-                hidden_stock[(sid, pid)] = nonnegative(item.get("quantity"), "在庫")
-            except InputError as exc:
-                raise cell_error(item, "quantity", item.get("quantity"), str(exc)) from exc
-        expected_pairs = {(sid, pid) for sid in systems for pid in parts}
-        if set(hidden_stock) != expected_pairs:
-            raise InputError("在庫メタデータの参照が不足しています")
-
-        hidden_alerts = {}
-        for item in _table(book, "__alerts"):
-            sid = optref(item.get("system_id"), systems, "システム", item=item, field="system_id")
-            pid = optref(item.get("part_id"), parts, "部品", item=item, field="part_id")
-            if (sid, pid) in hidden_alerts:
-                raise InputError("下限設定が重複しています")
-            try:
-                hidden_alerts[(sid, pid)] = nonnegative(
-                    item.get("threshold"), "下限値", allow_zero=False
-                )
-            except InputError as exc:
-                raise cell_error(item, "threshold", item.get("threshold"), str(exc)) from exc
-
-        visible_expected = {
-            pair for pair, qty in hidden_stock.items()
-            if qty > 0 or pair in hidden_alerts
-        }
+        # V2/V3 may contain __stocks and __alerts, but they are intentionally
+        # ignored: quantities and thresholds must come exclusively from 現在庫.
+        # Missing legacy sheets are not an error.
         ws = book["現在庫"] if "現在庫" in book else None
         if ws is None:
             raise InputError("現在庫シートがありません")
@@ -477,8 +447,9 @@ def read_snapshot(blob):
             for pid, r in parts.items()
         }
         shown = set()
-        final_stock = dict(hidden_stock)
-        final_alerts = dict(hidden_alerts)
+        final_stock = {}
+        final_alerts = {}
+        next_part_id = min(0, *parts.keys()) - 1
         for rownum, row in enumerate(iterator, 2):
             if rownum > MAX_ROWS:
                 raise InputError("現在庫一覧の行数が上限を超えています")
@@ -514,17 +485,35 @@ def read_snapshot(blob):
                     "Excelのシステム情報と一致しません"
                 )
             if pid is None:
+                # A new visible row has no hidden ID; allocate an import-local
+                # negative ID, never an ID from the destination database.
+                try:
+                    name = text_field(vals.get("品名"), "品名", 250)
+                except InputError as exc:
+                    raise InputError(
+                        f"「現在庫」シート D{rownum}（品名）、"
+                        f"入力値：{cell_value_label(vals.get('品名'))}。{exc}"
+                    ) from exc
+                pid = next_part_id
+                next_part_id -= 1
+                parts[pid] = {
+                    "part_number": part_number, "model_number": model_number,
+                    "name": name, "previous_part_id": None, "category_id": None,
+                }
+                sorted_parts.append(pid)
+                part_by_identity[(part_number, model_number)] = pid
+            elif vals.get("品名") != safe_excel(parts[pid]["name"]):
                 raise InputError(
-                    f"「現在庫」シート B{rownum}・C{rownum}（品番・型式）、"
-                    f"入力値：{cell_value_label(vals.get('品番'))} / "
-                    f"{cell_value_label(vals.get('型式'))}。"
-                    "部品情報の品番・型式と一致しません（メタデータと一致しません）"
+                    f"「現在庫」シート D{rownum}（品名）、"
+                    f"入力値：{cell_value_label(vals.get('品名'))}。"
+                    f"「部品情報」の品名「{parts[pid]['name']}」と一致しません"
                 )
             pair = (sid, pid)
-            if pair in shown or pair not in visible_expected:
-                raise InputError(f"{rownum}行目に重複・未登録の部品があります")
-            if vals.get("品名") != safe_excel(parts[pid]["name"]):
-                raise InputError(f"{rownum}行目の品名がメタデータと一致しません")
+            if pair in shown:
+                raise InputError(
+                    f"「現在庫」シート {rownum}行目（品番・型式）、"
+                    f"品番「{part_number}」、型式「{model_number}」が重複しています"
+                )
             shown.add(pair)
             try:
                 final_stock[pair] = nonnegative(vals.get("現在庫"), "現在庫")
@@ -544,9 +533,6 @@ def read_snapshot(blob):
                     ) from exc
             else:
                 final_alerts.pop(pair, None)
-        if shown != visible_expected:
-            raise InputError("現在庫シートに不足している行があります。行は削除せず数量を0にしてください")
-
         return {
             "checksum": hashlib.sha256(blob).hexdigest(),
             "systems": systems, "equipment": equipment, "sections": sections,
