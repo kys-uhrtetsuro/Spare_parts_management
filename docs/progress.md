@@ -225,6 +225,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [実装] 起動時・警告対象の組合せ変更時にWindows-ToastsでWindows通知（初期ON、画面からOFF可能）。同じ警告の再描画では重複通知しない
 - [実装] ブラウザ実行時は許可済みのNotification APIを代替利用。OS側で抑制されても画面の警告は継続表示
 - [依存] Windowsのみwindows-toasts==1.3.1。Linux CIで不要なWinRT依存をインストールしない
-- [検証] JavaScript E2Eで下限一覧表示と警告導線を検証、Windows通知ブリッジはモック単体テスト
-- [検証待ち] Windows配布ビルドと実機OSトースト通知（Windows通知設定の影響あり）
-- [ブランチ] feature/low-stock-notifications → Release
+- [CI検証済み] Django/React・Playwrightの下限一覧・警告導線・Windows通知ブリッジ単体テスト成功（CI #38827622732 / #38827627712）
+- [検証待ち] ReleaseでのWindows配布ビルドと、ユーザーWindows端末でのOSトースト通知（Windows通知設定の影響あり）
+- [統合済み] feature/low-stock-notifications → Release（PR #12、d4c1f2a4）
