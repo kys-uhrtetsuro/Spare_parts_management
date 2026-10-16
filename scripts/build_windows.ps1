@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 python -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "Python依存のインストール失敗" }
+python -c "from windows_toasts import WindowsToaster, Toast; print('Windows toast runtime import OK')"
+if ($LASTEXITCODE -ne 0) { throw "Windows通知ライブラリが利用できません" }
 python scripts/prepare_icon.py
 if ($LASTEXITCODE -ne 0) { throw "アイコン生成失敗" }
 Push-Location frontend
