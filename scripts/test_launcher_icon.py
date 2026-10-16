@@ -113,6 +113,11 @@ class NativeIconTests(unittest.TestCase):
             icon.parent.mkdir(parents=True)
             icon.write_bytes(b"icon")
             webview = Mock()
+            webview.settings = {"ALLOW_DOWNLOADS": False}
+            # The setting must be enabled before WebView2 creates the window.
+            def assert_downloads_allowed(*_args, **_kwargs):
+                self.assertTrue(webview.settings["ALLOW_DOWNLOADS"])
+            webview.create_window.side_effect = assert_downloads_allowed
             order = Mock()
             with patch.object(launcher, "set_windows_app_identity") as identity:
                 order.attach_mock(identity, "identity")

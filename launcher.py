@@ -74,6 +74,9 @@ def show_desktop(webview, url, resource_root):
     """pywebview 6.2 sets WinForms.Form.Icon before the native window is shown."""
     icon_path = icon_path_for(resource_root)
     set_windows_app_identity()
+    # pywebview disables downloads by default. EdgeChromium shows the native
+    # Save As dialog for Django's Content-Disposition: attachment responses.
+    webview.settings["ALLOW_DOWNLOADS"] = True
     webview.create_window(
         "予備品管理システム", url, width=1320, height=850, min_size=(900, 620)
     )

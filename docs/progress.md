@@ -209,3 +209,11 @@ Nexusとは独立したプロジェクトとして管理する。
 - [維持] Windowsビルド完了時の既存ZIP（約64.3MB）は再生成しない。フロー変更のみではWindowsビルドを自動起動しない設定を維持
 - [検証待ち] 次回WindowsビルドでOBJ数/生成Cファイル数の表示を確認。リンク・ZIP作成処理は表示対象外
 - [確認] 修正開始時点で実行中のWindowsビルドなし。直近のRelease Windowsビルド #38714119795 は成功済み
+
+## Excel出力のWindowsダウンロード修正（2026-10-16）
+- [原因] pywebview 6.2の標準設定でALLOW_DOWNLOADSがFalse。DjangoのExcel生成とブラウザE2Eは成功するが、デスクトップWebViewのダウンロードが禁止されていた
+- [修正] show_desktopでcreate_windowより前にALLOW_DOWNLOADSをTrueへ設定し、EdgeChromium標準の保存先指定ダイアログを有効化
+- [維持] /api/exportのxlsx内容・システム/機器/部位/分類フィルタ・Excel取込・Nuitka・既存dataディレクトリは変更しない
+- [テスト] ウィンドウ生成前にダウンロードが許可されていることをモック単体テストで確認
+- [検証待ち] CIのWindowsアイコン/起動テスト・Django/React E2Eおよび新版EXEのWindows実機で「名前を付けて保存」を確認
+- [ブランチ] bugfix/pywebview-excel-download → Release
