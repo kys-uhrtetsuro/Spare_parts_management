@@ -369,7 +369,11 @@ def import_preview(request):
 def import_apply(request):
     payload = uploaded_snapshot(request)
     rename = request.POST.get("system_name")
-    result = apply_snapshot(payload, rename=rename if rename else None)
+    destination_id = request.POST.get("target_system_id")
+    result = apply_snapshot(
+        payload, rename=rename if rename else None,
+        target_system_id=destination_id if destination_id else None,
+    )
     return JsonResponse(result, status=201)
 
 

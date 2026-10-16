@@ -14,7 +14,7 @@ type Version = { id: number; old_part_number: string; old_model_number: string; 
 type ImportPreview = {
   checksum: string; systems: string[]; system_count: number; equipment_count: number
   part_count: number; opening_rows: number; quantity_total: number; alert_count: number
-  conflicts: string[]; already_imported: boolean
+  conflicts: string[]; already_imported: boolean; available_targets: System[]
 }
 type View = 'stock' | 'low-stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
 type AssignmentForm = { equipment_id: string; section_id: string }
@@ -57,10 +57,11 @@ async function api<T>(path: string, method = 'GET', data?: unknown): Promise<T> 
   }
   return response.json() as Promise<T>
 }
-async function uploadWorkbook<T>(path: string, file: File, rename?: string): Promise<T> {
+async function uploadWorkbook<T>(path: string, file: File, rename?: string, destinationId?: number): Promise<T> {
   const body = new FormData()
   body.append('file', file)
   if (rename?.trim()) body.append('system_name', rename.trim())
+  if (destinationId !== undefined) body.append('target_system_id', String(destinationId))
   const response = await fetch('/api/' + path, {
     method: 'POST',
     headers: { 'X-CSRFToken': decodeURIComponent(token()) },
@@ -140,6 +141,7 @@ export default function App() {
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importRename, setImportRename] = useState('')
+  const [importTarget, setImportTarget] = useState('new')
   const [importError, setImportError] = useState('')
   const [editor, setEditor] = useState<Editor | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
@@ -398,6 +400,7 @@ export default function App() {
     try {
       const data = await uploadWorkbook<ImportPreview>('import/preview', importFile)
       setImportPreview(data)
+      setImportTarget('new')
     } catch (err) {
       setImportError(err instanceof Error ? err.message : String(err))
     } finally { setBusy(false) }
@@ -412,13 +415,16 @@ export default function App() {
     setBusy(true)
     try {
       const result = await uploadWorkbook<{ systems: string[]; opening_rows: number }>(
-        'import/apply', importFile, importRename,
+        'import/apply', importFile,
+        importTarget === 'new' ? importRename : undefined,
+        importTarget === 'new' ? undefined : Number(importTarget),
       )
       setNotice(result.systems.join('、') + 'を取り込みました（期首在庫' + result.opening_rows + '件）')
       setImportModal(false)
       setImportPreview(null)
       setImportFile(null)
       setImportRename('')
+      setImportTarget('new')
       setSelected('')
       try { await load() } catch { setError('保存しましたが、一覧の再読込に失敗しました') }
     } catch (err) {
@@ -525,7 +531,7 @@ export default function App() {
           {tab === 'stock' && <>
             <button className="button secondary" onClick={() => {
               setImportModal(true); setImportFile(null); setImportPreview(null)
-              setImportRename(''); setImportError('')
+              setImportRename(''); setImportTarget('new'); setImportError('')
             }}>Excel取込</button>
             <a className="button secondary" href={'/api/export?' + new URLSearchParams({
               ...(selected ? { system: selected } : {}),
@@ -680,19 +686,40 @@ export default function App() {
           期首在庫：{importPreview.opening_rows}件（合計{importPreview.quantity_total}個） /
           下限設定：{importPreview.alert_count}件</p>
         {importPreview.already_imported && <p className="import-warning">このExcelは既に取り込み済みです。</p>}
-        {importPreview.conflicts.length > 0 && <p className="import-warning">
-          同名システムが存在：{importPreview.conflicts.join('、')}。移植先の名称を指定してください。
+        {importPreview.system_count === 1 && <>
+          <label className="field wide">取り込み先
+            <select aria-label="Excelの取り込み先" value={importTarget} onChange={e => {
+              setImportTarget(e.target.value); setImportError('')
+            }}>
+              <option value="new">新規システムを作成（フォーク）</option>
+              {importPreview.available_targets.map(s =>
+                <option key={s.id} value={s.id}>既存の空システム：{s.name}</option>
+              )}
+            </select>
+          </label>
+          {importTarget === 'new' ? <>
+            {importPreview.conflicts.length > 0 && <p className="import-warning">
+              同名システムが存在：{importPreview.conflicts.join('、')}。新しいシステム名を指定してください。
+            </p>}
+            <label className="field">新規システム名（未入力ならExcelと同じ名前）
+              <input value={importRename} onChange={e => setImportRename(e.target.value)} placeholder="例：制御A（別設備）" />
+            </label>
+          </> : <p className="help">
+            指定した空システムに機器・部位・期首在庫・下限設定を取り込みます。
+            既に在庫履歴や機器・割当・下限設定のあるシステムは選択できません。
+          </p>}
+        </>}
+        {importPreview.system_count > 1 && importPreview.conflicts.length > 0 && <p className="import-warning">
+          同名システムが存在：{importPreview.conflicts.join('、')}。複数システムのExcelは重複する名称を変更してから取り込んでください。
         </p>}
-        {importPreview.system_count === 1 && <label className="field">移植先システム名（変更する場合のみ）
-          <input value={importRename} onChange={e => setImportRename(e.target.value)} placeholder="例：制御A（別設備）" />
-        </label>}
       </div>}
       <div className="dialog-actions">
         <button className="button secondary" onClick={() => setImportModal(false)}>キャンセル</button>
         {!importPreview ? <button className="button primary" disabled={busy || !importFile} onClick={previewImport}>内容を確認</button>
           : <button className="button primary" disabled={
             busy || importPreview.already_imported ||
-            (importPreview.conflicts.length > 0 && (!importRename.trim() || importPreview.system_count !== 1))
+            (importTarget === 'new' && importPreview.conflicts.length > 0 &&
+              (!importRename.trim() || importPreview.system_count !== 1))
           } onClick={applyImport}>取り込みを確定</button>}
       </div>
     </Modal>}

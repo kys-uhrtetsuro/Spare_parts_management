@@ -276,7 +276,10 @@ def read_snapshot(blob):
                 return None
             rid = nonnegative(value, label, allow_zero=False)
             if rid not in mapping:
-                raise InputError(f"参照先の{label}が見つかりません")
+                raise InputError(
+                    f"Excel内の参照先「{label}ID {rid}」が非表示メタデータに存在しません。"
+                    "取り込み先DBのIDではなく、Excelファイル内部の参照不整合です。"
+                )
             return rid
 
         for machine in equipment.values():
@@ -402,6 +405,19 @@ def read_snapshot(blob):
         book.close()
 
 
+def available_fork_targets():
+    """Existing systems are usable only if no system-scoped records would be overwritten."""
+    return list(SystemMaster.objects.exclude(
+        pk__in=StockHistory.objects.values("system_id")
+    ).exclude(
+        pk__in=EquipmentMaster.objects.values("system_id")
+    ).exclude(
+        pk__in=SystemPartPlacement.objects.values("system_id")
+    ).exclude(
+        pk__in=StockAlertSetting.objects.values("system_id")
+    ).order_by("name", "pk").values("id", "name"))
+
+
 def preview_snapshot(payload):
     sysnames = [r["name"] for r in payload["systems"].values()]
     existing = set(SystemMaster.objects.filter(name__in=sysnames).values_list("name", flat=True))
@@ -417,11 +433,19 @@ def preview_snapshot(payload):
         "alert_count": len(payload["alerts"]),
         "conflicts": sorted(existing),
         "already_imported": duplicate,
+        "available_targets": available_fork_targets() if len(payload["systems"]) == 1 else [],
     }
 
 
-def apply_snapshot(payload, *, rename=None):
-    """Atomic, append-only fork. Never modifies a destination stock balance."""
+def apply_snapshot(payload, *, rename=None, target_system_id=None):
+    """Atomic fork into new systems or one explicitly selected empty destination."""
+    if target_system_id is not None:
+        from .services import positive_int
+        target_system_id = positive_int(target_system_id, "取り込み先システムID")
+        if rename is not None:
+            raise InputError("既存システムを選ぶ場合、新しいシステム名は指定できません")
+        if len(payload["systems"]) != 1:
+            raise InputError("既存システムへの取り込みは単一システムのExcelのみ対応します")
     if rename is not None:
         rename = text_field(rename, "移植先システム名", 120)
         if len(payload["systems"]) != 1:
@@ -433,13 +457,22 @@ def apply_snapshot(payload, *, rename=None):
     with WRITE_LOCK, transaction.atomic():
         if StockImportBatch.objects.filter(checksum=payload["checksum"]).exists():
             raise InputError("このExcelファイルは既に取り込まれています")
-        if SystemMaster.objects.filter(name__in=system_names.values()).exists():
-            raise InputError("同名システムがあります。取り込み先システム名を変更してください")
-
-        system_map = {
-            sid: SystemMaster.objects.create(name=name).pk
-            for sid, name in system_names.items()
-        }
+        if target_system_id is not None:
+            target = SystemMaster.objects.select_for_update().filter(pk=target_system_id).first()
+            if target is None:
+                raise InputError("取り込み先システムが存在しません")
+            if not any(row["id"] == target.pk for row in available_fork_targets()):
+                raise InputError("取り込み先には在庫履歴・機器・割当・下限設定のない空のシステムを選択してください")
+            source_id = next(iter(payload["systems"]))
+            system_map = {source_id: target.pk}
+            system_names = {source_id: target.name}
+        else:
+            if SystemMaster.objects.filter(name__in=system_names.values()).exists():
+                raise InputError("同名システムがあります。取り込み先システム名を変更してください")
+            system_map = {
+                sid: SystemMaster.objects.create(name=name).pk
+                for sid, name in system_names.items()
+            }
         eq_map = {}
         for src_id, obj in payload["equipment"].items():
             equipment = EquipmentMaster.objects.create(
