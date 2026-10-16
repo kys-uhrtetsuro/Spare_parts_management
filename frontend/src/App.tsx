@@ -677,7 +677,7 @@ export default function App() {
           {busy ? '取り込み中…' : '取り込み実行'}
         </button>
       </div>
-    </Modal>
+    </Modal>}
     {movementModal && <Modal title={movement.direction === 'IN' ? '入庫登録' : '出庫登録'} onClose={() => setMovementModal(false)}>
       <div className="form-grid">
         <label className="field">システム<input disabled value={systems.find(s => String(s.id) === selected)?.name ?? ''} /></label>
