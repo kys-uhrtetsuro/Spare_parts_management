@@ -11,11 +11,6 @@ type Stock = { system_id: number; system: string; part_id: number; part_number: 
 type History = { id: number; system_id: number; system: string; part_id: number; part_number: string; model_number: string; name: string; direction: 'IN' | 'OUT'; quantity: number; operator: string; note: string; reversal_of: number | null; corrected: boolean; created_at: string }
 type Alert = { part_id: number; threshold: number }
 type Version = { id: number; old_part_number: string; old_model_number: string; new_part_number: string; new_model_number: string; changed_at: string }
-type ImportPreview = {
-  checksum: string; systems: string[]; system_count: number; equipment_count: number
-  part_count: number; opening_rows: number; quantity_total: number; alert_count: number
-  conflicts: string[]; already_imported: boolean; available_targets: System[]
-}
 type View = 'stock' | 'low-stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
 type AssignmentForm = { equipment_id: string; section_id: string }
 type PartForm = { part_number: string; model_number: string; name: string; system_id: string; placements: AssignmentForm[]; category_id: string }
@@ -139,7 +134,6 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [importModal, setImportModal] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
-  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importRename, setImportRename] = useState('')
   const [importTarget, setImportTarget] = useState('new')
   const [importError, setImportError] = useState('')
@@ -393,22 +387,10 @@ export default function App() {
       '下限アラートを一括保存しました',
     )
   }
-  const previewImport = async () => {
-    if (!importFile) { setImportError('Excelファイルを指定してください'); return }
-    setImportError('')
-    setBusy(true)
-    try {
-      const data = await uploadWorkbook<ImportPreview>('import/preview', importFile)
-      setImportPreview(data)
-      setImportTarget('new')
-    } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err))
-    } finally { setBusy(false) }
-  }
   const applyImport = async () => {
-    if (!importFile || !importPreview) return
-    if (importPreview.already_imported) {
-      setImportError('このExcelは既に取り込まれています')
+    if (!importFile) { setImportError('Excelファイルを指定してください'); return }
+    if (importTarget === 'new' && importRename && !importRename.trim()) {
+      setImportError('新規システム名には空白以外を入力してください')
       return
     }
     setImportError('')
@@ -422,7 +404,6 @@ export default function App() {
       setNotice(result.systems.join('、') + (importTarget === 'new'
         ? 'を新規作成しました（期首在庫' : 'へ在庫を加算しました（対象') + result.opening_rows + '件）')
       setImportModal(false)
-      setImportPreview(null)
       setImportFile(null)
       setImportRename('')
       setImportTarget('new')
@@ -531,8 +512,8 @@ export default function App() {
         <div className="toolbar-actions">
           {tab === 'stock' && <>
             <button className="button secondary" onClick={() => {
-              setImportModal(true); setImportFile(null); setImportPreview(null)
-              setImportRename(''); setImportTarget('new'); setImportError('')
+              setImportModal(true); setImportFile(null)
+              setImportRename(''); setImportTarget(selected || 'new'); setImportError('')
             }}>Excel取込</button>
             <a className="button secondary" href={'/api/export?' + new URLSearchParams({
               ...(selected ? { system: selected } : {}),
@@ -668,63 +649,35 @@ export default function App() {
       <footer className="footer"><span>Spare Parts Management</span><button onClick={async () => { await act(() => api('backup', 'POST', {}), 'data/backups にSQLiteバックアップを作成しました') }}>DBバックアップを作成</button></footer>
     </main>
 
-    {importModal && <Modal title="Excelからシステム・現在庫を取り込む" onClose={() => setImportModal(false)}>
-      <p className="help">Excel出力で作ったファイルを選択してください。表示中の在庫数・下限値はExcel上で変更できます。
-        非表示シートの機器・部位・分類・部品情報を使用します。新規システムの作成と、既存システムへの在庫加算に対応します。過去の入出庫履歴はコピーしません。</p>
+    {importModal && <Modal title="Excelからシステム・現在庫を取り込む" onClose={() => !busy && setImportModal(false)}>
+      <p className="help">Excelファイルと取り込み先を選んで実行します。既存システムでは品番・型式が一致する部品の在庫を加算し、未登録分を追加します。</p>
       <div className="form-grid">
         <label className="field wide">Excelファイル（.xlsx）
           <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            aria-label="取り込むExcelファイル" onChange={e => {
-              setImportFile(e.target.files?.[0] ?? null); setImportPreview(null); setImportError('')
+            aria-label="取り込むExcelファイル" disabled={busy} onChange={e => {
+              setImportFile(e.target.files?.[0] ?? null); setImportError('')
             }}/>
         </label>
+        <label className="field wide">取り込み先
+          <select aria-label="Excelの取り込み先" value={importTarget} disabled={busy}
+            onChange={e => { setImportTarget(e.target.value); setImportError('') }}>
+            <option value="new">新規システムを作成（フォーク）</option>
+            {systems.map(s => <option key={s.id} value={s.id}>既存システム：{s.name}</option>)}
+          </select>
+        </label>
+        {importTarget === 'new' && <label className="field wide">新規システム名（未入力ならExcelと同じ名前）
+          <input value={importRename} disabled={busy} onChange={e => setImportRename(e.target.value)}
+            placeholder="既存と同名なら別の名称を入力" />
+        </label>}
       </div>
       {importError && <div className="message error" role="alert">{importError}</div>}
-      {importPreview && <div className="import-summary">
-        <h3>取り込み内容の確認</h3>
-        <p>システム：{importPreview.systems.join('、')}</p>
-        <p>機器：{importPreview.equipment_count}件 / 部品：{importPreview.part_count}件 /
-          取り込み在庫：{importPreview.opening_rows}件（合計{importPreview.quantity_total}個） /
-          下限設定：{importPreview.alert_count}件</p>
-        {importPreview.already_imported && <p className="import-warning">このExcelは既に取り込み済みです。</p>}
-        {importPreview.system_count === 1 && <>
-          <label className="field wide">取り込み先
-            <select aria-label="Excelの取り込み先" value={importTarget} onChange={e => {
-              setImportTarget(e.target.value); setImportError('')
-            }}>
-              <option value="new">新規システムを作成（フォーク）</option>
-              {importPreview.available_targets.map(s =>
-                <option key={s.id} value={s.id}>既存システム：{s.name}</option>
-              )}
-            </select>
-          </label>
-          {importTarget === 'new' ? <>
-            {importPreview.conflicts.length > 0 && <p className="import-warning">
-              同名システムが存在：{importPreview.conflicts.join('、')}。新しいシステム名を指定してください。
-            </p>}
-            <label className="field">新規システム名（未入力ならExcelと同じ名前）
-              <input value={importRename} onChange={e => setImportRename(e.target.value)} placeholder="例：制御A（別設備）" />
-            </label>
-          </> : <p className="help">
-            取り込み先の既存在庫にExcelの数量を加算します。
-            同一の部品・機器・部位・割当は重複登録せず、未登録分のみ追加します。
-            下限設定は既存値を優先します。
-          </p>}
-        </>}
-        {importPreview.system_count > 1 && importPreview.conflicts.length > 0 && <p className="import-warning">
-          同名システムが存在：{importPreview.conflicts.join('、')}。複数システムのExcelは重複する名称を変更してから取り込んでください。
-        </p>}
-      </div>}
       <div className="dialog-actions">
-        <button className="button secondary" onClick={() => setImportModal(false)}>キャンセル</button>
-        {!importPreview ? <button className="button primary" disabled={busy || !importFile} onClick={previewImport}>内容を確認</button>
-          : <button className="button primary" disabled={
-            busy || importPreview.already_imported ||
-            (importTarget === 'new' && importPreview.conflicts.length > 0 &&
-              (!importRename.trim() || importPreview.system_count !== 1))
-          } onClick={applyImport}>取り込みを確定</button>}
+        <button className="button secondary" disabled={busy} onClick={() => setImportModal(false)}>キャンセル</button>
+        <button className="button primary" disabled={busy || !importFile} onClick={applyImport}>
+          {busy ? '取り込み中…' : '取り込み実行'}
+        </button>
       </div>
-    </Modal>}
+    </Modal>
     {movementModal && <Modal title={movement.direction === 'IN' ? '入庫登録' : '出庫登録'} onClose={() => setMovementModal(false)}>
       <div className="form-grid">
         <label className="field">システム<input disabled value={systems.find(s => String(s.id) === selected)?.name ?? ''} /></label>
