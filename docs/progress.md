@@ -261,4 +261,4 @@ Nexusとは独立したプロジェクトとして管理する。
 - [修正] Excel非表示メタデータの新規出力見出しを日本語化。旧英語見出しも読める後方互換処理を維持
 - [修正] エラー文面の物理フィールド名・メタデータシート物理名を日本語名称へ変更
 - [テスト] 型式省略の新規登録・品番差異・Excel出力再取り込み・英語見出し互換・React UI登録を回帰検証
-- [ブランチ] bugfix/optional-model-japanese-excel → Release
+- [統合済み] bugfix/optional-model-japanese-excel → Release（PR #16、63fc39f8、CI #38882825712成功）
