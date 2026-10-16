@@ -730,6 +730,40 @@ class InventoryTests(TestCase):
         self.assertIn("メタデータと一致しません", response.json()["error"])
         self.assertFalse(SystemMaster.objects.filter(name="別システム").exists())
 
+
+    def test_excel_error_reports_actual_cell_value_and_location(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+
+        self.movement("IN", 2)
+        baseline = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+
+        for sheet, cell, bad_value, expected in (
+            ("__parts", "B2", True, ("部品情報", "B2", "品番", "True", "真偽値")),
+            ("__parts", "C2", "M" * 161, ("部品情報", "C2", "型式", "160")),
+            ("現在庫", "B2", True, ("現在庫", "B2", "品番", "True", "真偽値")),
+            ("現在庫", "E2", -3, ("現在庫", "E2", "現在庫", "-3")),
+            ("__equipment", "B2", 999, ("機器情報", "B2", "システムID", "999")),
+        ):
+            book = load_workbook(io.BytesIO(baseline))
+            if sheet == "__equipment":
+                book[sheet].append([1, 999, "コンベヤ", ""])
+            else:
+                book[sheet][cell] = bad_value
+            stream = io.BytesIO()
+            book.save(stream)
+            book.close()
+            result = self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile("エラー確認.xlsx", stream.getvalue()),
+                "system_name": "取込先",
+            })
+            self.assertEqual(result.status_code, 400, result.content)
+            for value in expected:
+                self.assertIn(value, result.json()["error"])
+            self.assertFalse(SystemMaster.objects.filter(name="取込先").exists())
+
     def test_excel_includes_zero_when_alerted(self):
         replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 1}])
         response = self.client.get("/api/export")
