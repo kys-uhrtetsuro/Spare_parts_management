@@ -336,6 +336,94 @@ class InventoryTests(TestCase):
         self.assertFalse(SystemMaster.objects.filter(name="制御A-複製2").exists())
         self.assertEqual(StockImportBatch.objects.count(), 1)
 
+    def test_excel_fork_can_target_existing_empty_system_with_different_id(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import StockImportBatch
+        machine = EquipmentMaster.objects.create(system=self.system, name="分岐機")
+        SystemPartPlacement.objects.create(
+            system=self.system, part=self.part, equipment=machine,
+        )
+        self.movement("IN", 4)
+        replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 2}])
+        workbook = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+
+        def upload(path, **fields):
+            return self.client.post(path, data={
+                "file": SimpleUploadedFile("フォーク.xlsx", workbook), **fields,
+            })
+
+        preview = upload("/api/import/preview")
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertIn(
+            {"id": self.other.id, "name": "制御B"},
+            preview.json()["available_targets"],
+        )
+        self.assertNotIn(
+            {"id": self.system.id, "name": "制御A"},
+            preview.json()["available_targets"],
+        )
+        result = upload("/api/import/apply", target_system_id=str(self.other.id))
+        self.assertEqual(result.status_code, 201, result.content)
+        self.assertEqual(result.json()["systems"], ["制御B"])
+        self.assertEqual(SystemMaster.objects.count(), 2)
+        self.assertEqual(StockImportBatch.objects.count(), 1)
+        from .services import balance
+        self.assertEqual(balance(self.system.id, self.part.id), 4)
+        self.assertEqual(balance(self.other.id, self.part.id), 4)
+        self.assertEqual(
+            StockAlertSetting.objects.get(system=self.other, part=self.part).threshold, 2,
+        )
+        moved = EquipmentMaster.objects.get(system=self.other, name="分岐機")
+        self.assertNotEqual(moved.id, machine.id)
+        self.assertEqual(
+            SystemPartPlacement.objects.get(system=self.other, part=self.part).equipment_id,
+            moved.id,
+        )
+
+    def test_excel_existing_destination_must_be_empty(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import StockImportBatch
+        self.movement("IN", 2)
+        workbook = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+        for fields in (
+            {"target_system_id": str(self.system.pk)},
+            {"target_system_id": str(self.other.pk), "system_name": "invalid"},
+            {"target_system_id": "999999"},
+        ):
+            response = self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile("拒否.xlsx", workbook), **fields,
+            })
+            self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(StockHistory.objects.count(), 1)
+        self.assertEqual(StockImportBatch.objects.count(), 0)
+        self.assertEqual(SystemMaster.objects.count(), 2)
+
+    def test_excel_internal_source_system_reference_error_is_explicit(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        machine = EquipmentMaster.objects.create(system=self.system, name="搬送機")
+        SystemPartPlacement.objects.create(
+            system=self.system, part=self.part, equipment=machine,
+        )
+        workbook = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        workbook["__placements"]["A2"] = 999999
+        output = io.BytesIO()
+        workbook.save(output)
+        workbook.close()
+        response = self.client.post("/api/import/preview", data={
+            "file": SimpleUploadedFile("参照不整合.xlsx", output.getvalue()),
+        })
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("Excel内の参照先", response.json()["error"])
+        self.assertIn("システムID 999999", response.json()["error"])
+        self.assertIn("取り込み先DBのIDではなく", response.json()["error"])
+
     def test_excel_snapshot_allows_quantity_and_threshold_edits(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from openpyxl import load_workbook
