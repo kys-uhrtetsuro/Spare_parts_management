@@ -27,7 +27,6 @@ $argsList = @(
     "--include-package=config", "--include-package=inventory", "--include-package=django",
     "--module-parameter=django-settings-module=config.settings",
     "--include-package=waitress", "--include-package=windows_toasts",
-    "--include-package-data=webview",
     "--include-data-dir=$djangoLocale=django/conf/locale/ja",
     "--include-data-dir=frontend/dist=frontend/dist", "launcher.py"
 )
@@ -43,6 +42,12 @@ New-Item -ItemType Directory -Force -Path $package | Out-Null
 Move-Item -Path $dist -Destination "$package/src"
 if (-not (Test-Path "$package/src/django/conf/locale/ja/LC_MESSAGES/django.mo" -PathType Leaf)) {
     throw "Django日本語翻訳ファイルが配布物に含まれていません"
+}
+# pywebview JS resources must still be supplied by Nuitka's package configuration.
+foreach ($requiredJs in @("webview/js/api.js", "webview/js/finish.js")) {
+    if (-not (Test-Path "$package/src/$requiredJs" -PathType Leaf)) {
+        throw "pywebviewのJSリソースが同梱されていません: $requiredJs"
+    }
 }
 & ./scripts/build_native_launcher.ps1 -OutputFile "$package/SparePartsManagement.exe"
 python scripts/verify_windows_icon.py "$package/SparePartsManagement.exe"

@@ -228,3 +228,13 @@ Nexusとは独立したプロジェクトとして管理する。
 - [CI検証済み] Django/React・Playwrightの下限一覧・警告導線・Windows通知ブリッジ単体テスト成功（CI #38827622732 / #38827627712）
 - [検証待ち] ReleaseでのWindows配布ビルドと、ユーザーWindows端末でのOSトースト通知（Windows通知設定の影響あり）
 - [統合済み] feature/low-stock-notifications → Release（PR #12、d4c1f2a4）
+
+## Windowsビルド警告整理（2026-10-16）
+- [実装] Nuitka 4.2.2 → 4.3（Python 3.12継続、requirements.txtでバージョン管理）
+- [実装] Windows/CI workflow内のactions/checkout・setup-python・setup-node・upload-artifactをNode.js 24対応の最新メジャーへ更新、actions/cacheはv6、actions/github-scriptはv9
+- [実装] pywebviewの重複データ指定（--include-package-data=webview）を削除。Nuitka自動収集のapi.js/finish.jsの同梱をビルド時に検査
+- [実装] 45MiBを超えるstandalone ZIPはGitHub Releases添付ファイルへ格納（Git管理へ巨大ZIPを追加しない）。既存の配布形式は維持
+- [自動マージ条件] PR自身のDjango/React・Windows launcher CI成功、かつ現行Release Windowsビルド #38827800102（d4c1f2a4）の成功を確認した場合に限りReleaseへマージ
+- [安全対策] 現行ビルドの失敗・キャンセル・PR更新/競合時はマージしない。マージ後はworkflow_dispatchにより新版Release CI/Windowsビルドを明示起動
+- [検証待ち] Nuitka 4.3での実Windows standaloneビルド・pywebviewリソース、GitHub Releases配布とWindows実機起動
+- [ブランチ] feature/next-build-warning-cleanup → Release（自動マージ待ち）
