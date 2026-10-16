@@ -250,8 +250,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [制約] Excelの非表示メタデータ参照不整合は引き続きサーバー検証で拒否し、入力画面内にエラーを表示。別途データ修復が必要
 - [統合済み] bugfix/simplify-excel-import-ui → Release（PR #15、0e5b775a）
 
-- Standalone配布ビルド元: 0e5b775aa526cfa0fbfc43f797224264c1f58604
-- Standalone配布ZIP: 65022874 bytes（Git制限超過時はGitHub Releases）
 
 
 ## 型式任意化・Excel物理名表示改善（2026-10-16）
@@ -262,3 +260,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [修正] エラー文面の物理フィールド名・メタデータシート物理名を日本語名称へ変更
 - [テスト] 型式省略の新規登録・品番差異・Excel出力再取り込み・英語見出し互換・React UI登録を回帰検証
 - [統合済み] bugfix/optional-model-japanese-excel → Release（PR #16、63fc39f8、CI #38882825712成功）
+
+- Standalone配布ビルド元: 63fc39f8d3552a97323780308def760cee847be5
+- Standalone配布ZIP: 65036108 bytes（Git制限超過時はGitHub Releases）
+
