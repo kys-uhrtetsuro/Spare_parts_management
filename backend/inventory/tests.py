@@ -382,7 +382,7 @@ class InventoryTests(TestCase):
             moved.id,
         )
 
-    def test_excel_existing_destination_must_be_empty(self):
+    def test_excel_existing_destination_rejects_invalid_target_and_rename(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from .models import StockImportBatch
         self.movement("IN", 2)
@@ -390,7 +390,6 @@ class InventoryTests(TestCase):
             f"/api/export?system={self.system.pk}"
         ).streaming_content)
         for fields in (
-            {"target_system_id": str(self.system.pk)},
             {"target_system_id": str(self.other.pk), "system_name": "invalid"},
             {"target_system_id": "999999"},
         ):
@@ -401,6 +400,83 @@ class InventoryTests(TestCase):
         self.assertEqual(StockHistory.objects.count(), 1)
         self.assertEqual(StockImportBatch.objects.count(), 0)
         self.assertEqual(SystemMaster.objects.count(), 2)
+
+    def test_excel_fork_adds_existing_stock_and_avoids_duplicate_assignments(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import StockImportBatch
+        machine = EquipmentMaster.objects.create(system=self.system, name="搬送機", alias="CV")
+        section = EquipmentSection.objects.create(equipment=machine, name="搬送部")
+        SystemPartPlacement.objects.create(
+            system=self.system, part=self.part, equipment=machine, section=section
+        )
+        self.movement("IN", 3)
+        replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 2}])
+        original = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+
+        destination_machine = EquipmentMaster.objects.create(system=self.other, name="搬送機", alias="CV")
+        destination_section = EquipmentSection.objects.create(equipment=destination_machine, name="搬送部")
+        SystemPartPlacement.objects.create(
+            system=self.other, part=self.part, equipment=destination_machine,
+            section=destination_section,
+        )
+        self.movement("IN", 5, system=self.other)
+        replace_alerts(self.other, [{"part_id": self.part.id, "threshold": 10}])
+
+        def upload():
+            return self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile("既存在庫へ追加.xlsx", original),
+                "target_system_id": str(self.other.id),
+            })
+        result = upload()
+        self.assertEqual(result.status_code, 201, result.content)
+        from .services import balance
+        self.assertEqual(balance(self.other.id, self.part.id), 8)
+        self.assertEqual(balance(self.system.id, self.part.id), 3)
+        self.assertEqual(EquipmentMaster.objects.filter(system=self.other, name="搬送機").count(), 1)
+        self.assertEqual(SystemPartPlacement.objects.filter(system=self.other).count(), 1)
+        self.assertEqual(StockAlertSetting.objects.get(system=self.other, part=self.part).threshold, 10)
+        self.assertEqual(StockImportBatch.objects.count(), 1)
+        self.assertEqual(upload().status_code, 400)
+
+    def test_excel_fork_never_merges_different_part_despite_matching_numeric_id(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        self.movement("IN", 3)
+        workbook = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        # Simulate an independently generated source workbook whose part numeric
+        # ID collides with a destination part ID but names a different part.
+        imported_part = PartMaster.objects.create(
+            part_number="OTHER", model_number="B", name="別部品",
+        )
+        self.movement("IN", 7, system=self.other, part=imported_part)
+        original_id = workbook["__parts"]["A2"].value
+        workbook["__parts"]["A2"] = imported_part.id
+        for sheet_name, columns in (
+            ("__placements", ("B",)),
+            ("__stocks", ("B",)),
+            ("__alerts", ("B",)),
+        ):
+            ws = workbook[sheet_name]
+            for row in range(2, ws.max_row + 1):
+                for column in columns:
+                    if ws[f"{column}{row}"].value == original_id:
+                        ws[f"{column}{row}"] = imported_part.id
+        out = io.BytesIO()
+        workbook.save(out)
+        workbook.close()
+        result = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("外部ID衝突.xlsx", out.getvalue()),
+            "target_system_id": str(self.other.id),
+        })
+        # The source identifier is authoritative, not the numeric PK alone.
+        self.assertEqual(result.status_code, 201, result.content)
+        from .services import balance
+        self.assertEqual(balance(self.other.id, imported_part.pk), 7)
+        self.assertEqual(balance(self.other.id, self.part.pk), 3)
 
     def test_excel_internal_source_system_reference_error_is_explicit(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

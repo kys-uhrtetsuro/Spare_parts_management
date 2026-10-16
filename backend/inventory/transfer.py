@@ -406,16 +406,8 @@ def read_snapshot(blob):
 
 
 def available_fork_targets():
-    """Existing systems are usable only if no system-scoped records would be overwritten."""
-    return list(SystemMaster.objects.exclude(
-        pk__in=StockHistory.objects.values("system_id")
-    ).exclude(
-        pk__in=EquipmentMaster.objects.values("system_id")
-    ).exclude(
-        pk__in=SystemPartPlacement.objects.values("system_id")
-    ).exclude(
-        pk__in=StockAlertSetting.objects.values("system_id")
-    ).order_by("name", "pk").values("id", "name"))
+    """Any existing system can receive an additive import."""
+    return list(SystemMaster.objects.order_by("name", "pk").values("id", "name"))
 
 
 def preview_snapshot(payload):
@@ -438,7 +430,7 @@ def preview_snapshot(payload):
 
 
 def apply_snapshot(payload, *, rename=None, target_system_id=None):
-    """Atomic fork into new systems or one explicitly selected empty destination."""
+    """Atomically fork into new systems or append records to an existing system."""
     if target_system_id is not None:
         from .services import positive_int
         target_system_id = positive_int(target_system_id, "取り込み先システムID")
@@ -461,8 +453,6 @@ def apply_snapshot(payload, *, rename=None, target_system_id=None):
             target = SystemMaster.objects.select_for_update().filter(pk=target_system_id).first()
             if target is None:
                 raise InputError("取り込み先システムが存在しません")
-            if not any(row["id"] == target.pk for row in available_fork_targets()):
-                raise InputError("取り込み先には在庫履歴・機器・割当・下限設定のない空のシステムを選択してください")
             source_id = next(iter(payload["systems"]))
             system_map = {source_id: target.pk}
             system_names = {source_id: target.name}
@@ -475,15 +465,23 @@ def apply_snapshot(payload, *, rename=None, target_system_id=None):
             }
         eq_map = {}
         for src_id, obj in payload["equipment"].items():
-            equipment = EquipmentMaster.objects.create(
-                system_id=system_map[obj["system_id"]],
-                name=obj["name"], alias=obj["alias"],
+            destination_id = system_map[obj["system_id"]]
+            # Equipment IDs may differ between exported SQLite databases.
+            # Only coalesce records whose system, name AND alias agree.
+            equipment, created = EquipmentMaster.objects.get_or_create(
+                system_id=destination_id, name=obj["name"],
+                defaults={"alias": obj["alias"]},
             )
+            if not created and equipment.alias != obj["alias"]:
+                raise InputError(
+                    f"機器『{obj['name']}』の通称が既存データと異なります。"
+                    "異なる機器をIDだけで統合することはできません"
+                )
             eq_map[src_id] = equipment.pk
 
         section_map = {}
         for src_id, obj in payload["sections"].items():
-            section = EquipmentSection.objects.create(
+            section, _ = EquipmentSection.objects.get_or_create(
                 equipment_id=eq_map[obj["equipment_id"]], name=obj["name"],
             )
             section_map[src_id] = section.pk
@@ -520,14 +518,21 @@ def apply_snapshot(payload, *, rename=None, target_system_id=None):
                     new_model_number=obj["model_number"],
                 )
 
-        SystemPartPlacement.objects.bulk_create([
-            SystemPartPlacement(
-                system_id=system_map[sid], part_id=part_map[pid],
-                equipment_id=eq_map[eid],
-                section_id=section_map.get(section),
-            )
-            for sid, pid, eid, section in payload["placements"]
-        ])
+        existing_placements = set(
+            SystemPartPlacement.objects.filter(
+                system_id__in=system_map.values()
+            ).values_list("system_id", "part_id", "equipment_id", "section_id")
+        )
+        new_placements = []
+        for sid, pid, eid, section in payload["placements"]:
+            key = (system_map[sid], part_map[pid], eq_map[eid], section_map.get(section))
+            if key not in existing_placements:
+                new_placements.append(SystemPartPlacement(
+                    system_id=key[0], part_id=key[1],
+                    equipment_id=key[2], section_id=key[3],
+                ))
+                existing_placements.add(key)
+        SystemPartPlacement.objects.bulk_create(new_placements)
         new_rows = []
         for (sid, pid), qty in payload["stock"].items():
             if qty:
@@ -542,11 +547,18 @@ def apply_snapshot(payload, *, rename=None, target_system_id=None):
                     model_number_snapshot=part["model_number"],
                 ))
         StockHistory.objects.bulk_create(new_rows)
+        # Thresholds are settings, not stock quantities: never add them.
+        # Preserve existing destination thresholds; add imported settings only
+        # for previously unmonitored parts.
+        current_alerts = set(StockAlertSetting.objects.filter(
+            system_id__in=system_map.values()
+        ).values_list("system_id", "part_id"))
         StockAlertSetting.objects.bulk_create([
             StockAlertSetting(
                 system_id=system_map[sid], part_id=part_map[pid], threshold=value,
             )
             for (sid, pid), value in payload["alerts"].items()
+            if (system_map[sid], part_map[pid]) not in current_alerts
         ])
         # Imported historical alert metadata must follow the same revision rule.
         for new_system_id in system_map.values():

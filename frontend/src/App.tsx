@@ -693,7 +693,7 @@ export default function App() {
             }}>
               <option value="new">新規システムを作成（フォーク）</option>
               {importPreview.available_targets.map(s =>
-                <option key={s.id} value={s.id}>既存の空システム：{s.name}</option>
+                <option key={s.id} value={s.id}>既存システム：{s.name}</option>
               )}
             </select>
           </label>
@@ -705,8 +705,9 @@ export default function App() {
               <input value={importRename} onChange={e => setImportRename(e.target.value)} placeholder="例：制御A（別設備）" />
             </label>
           </> : <p className="help">
-            指定した空システムに機器・部位・期首在庫・下限設定を取り込みます。
-            既に在庫履歴や機器・割当・下限設定のあるシステムは選択できません。
+            取り込み先の既存在庫にExcelの数量を加算します。
+            同一の部品・機器・部位・割当は重複登録せず、未登録分のみ追加します。
+            下限設定は既存値を優先します。
           </p>}
         </>}
         {importPreview.system_count > 1 && importPreview.conflicts.length > 0 && <p className="import-warning">
