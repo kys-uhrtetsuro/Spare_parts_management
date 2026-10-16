@@ -117,7 +117,9 @@ try {
   await page.getByText('下限アラートを一括保存しました').waitFor()
   // A new identifier must not rename the old stock row.
   await page.getByRole('button', { name: '部品マスタ' }).click()
-  await page.getByRole('button', { name: '編集・後継登録' }).click()
+  await page.getByRole('row').filter({
+    has: page.getByRole('cell', { name: 'P100', exact: true }),
+  }).getByRole('button', { name: '編集・後継登録' }).click()
   const inheritedForm = page.getByRole('dialog', { name: '部品変更・品番/型式引継ぎ' })
   await inheritedForm.getByLabel('機器（任意） #2').waitFor()
   await page.getByRole('dialog').getByLabel('品番').fill('P200')
