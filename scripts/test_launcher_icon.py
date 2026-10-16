@@ -2,6 +2,7 @@
 import importlib.util
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -125,10 +126,32 @@ class NativeIconTests(unittest.TestCase):
                 order.attach_mock(webview.start, "start")
                 launcher.show_desktop(webview, "http://127.0.0.1:12345/", Path(tmp))
             webview.start.assert_called_once_with(gui="edgechromium", icon=str(icon))
+            self.assertIsInstance(
+                webview.create_window.call_args.kwargs["js_api"],
+                launcher.DesktopNotificationBridge,
+            )
             self.assertEqual(
                 [call[0] for call in order.mock_calls],
                 ["identity", "create_window", "start"],
             )
+
+    def test_native_low_stock_notification_bridge(self):
+        fake = types.ModuleType("windows_toasts")
+        fake.Toast = Mock(return_value=Mock())
+        fake.WindowsToaster = Mock(return_value=Mock())
+        with patch.object(launcher.sys, "platform", "win32"):
+            with patch.dict(sys.modules, {"windows_toasts": fake}):
+                bridge = launcher.DesktopNotificationBridge()
+                self.assertFalse(bridge.notify_low_stock(0))
+                self.assertFalse(bridge.notify_low_stock("1"))
+                self.assertTrue(bridge.notify_low_stock(3))
+        self.assertEqual(
+            fake.Toast.return_value.text_fields,
+            ["予備品管理システム：下限在庫",
+             "3件の部品が下限値以下です。下限在庫一覧を確認してください。"],
+        )
+        fake.WindowsToaster.assert_called_once_with("予備品管理システム")
+        fake.WindowsToaster.return_value.show_toast.assert_called_once_with(fake.Toast.return_value)
 
     def test_missing_icon_fails_without_opening_native_window(self):
         with tempfile.TemporaryDirectory() as tmp:

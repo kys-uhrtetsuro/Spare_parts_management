@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import appIcon from './assets/spare_parts.png'
 
 type System = { id: number; name: string }
@@ -16,7 +16,7 @@ type ImportPreview = {
   part_count: number; opening_rows: number; quantity_total: number; alert_count: number
   conflicts: string[]; already_imported: boolean
 }
-type View = 'stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
+type View = 'stock' | 'low-stock' | 'history' | 'parts' | 'alerts' | 'systems' | 'equipment' | 'categories'
 type AssignmentForm = { equipment_id: string; section_id: string }
 type PartForm = { part_number: string; model_number: string; name: string; system_id: string; placements: AssignmentForm[]; category_id: string }
 type Editor = { mode: 'create' | 'edit'; partId?: number; copyFrom?: number; values: PartForm }
@@ -73,6 +73,21 @@ async function uploadWorkbook<T>(path: string, file: File, rename?: string): Pro
   }
   return response.json() as Promise<T>
 }
+type NotificationWindow = Window & {
+  pywebview?: { api?: { notify_low_stock?: (count: number) => Promise<boolean> } }
+}
+async function notifyDesktop(count: number) {
+  if (count < 1) return
+  const native = (window as NotificationWindow).pywebview?.api?.notify_low_stock
+  if (native) {
+    try { if (await native(count)) return } catch { /* Fall back to browser notifications. */ }
+  }
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('予備品管理システム：下限在庫', {
+      body: count + '件の部品が下限値以下です。下限在庫一覧を確認してください。',
+    })
+  }
+}
 function label(p: Part) { return p.part_number + ' / ' + p.model_number + ' — ' + p.name }
 function dateTime(v: string) { return new Date(v).toLocaleString('ja-JP', { dateStyle: 'short', timeStyle: 'short' }) }
 function useStoredValue(key: string) {
@@ -89,6 +104,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 const views: { id: View; label: string }[] = [
   { id: 'stock', label: '現在在庫一覧' },
+  { id: 'low-stock', label: '下限在庫一覧' },
   { id: 'history', label: '入出庫履歴' },
   { id: 'alerts', label: '下限アラート設定' },
   { id: 'systems', label: 'システム一覧' },
@@ -107,6 +123,9 @@ export default function App() {
   const [sections, setSections] = useState<Section[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [stocks, setStocks] = useState<Stock[]>([])
+  const [stocksReady, setStocksReady] = useState(false)
+  const [desktopNotifyChoice, setDesktopNotifyChoice] = useStoredValue('desktop-low-stock-notifications')
+  const lastNotifiedRef = useRef<string | null>(null)
   const [history, setHistory] = useState<History[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [selected, setSelected] = useState('')
@@ -147,13 +166,13 @@ export default function App() {
     const [a, b, c, d, e, f, g] = await Promise.all([
       api<{ items: System[] }>('systems'),
       api<{ items: Part[] }>('parts'),
-      api<{ items: Stock[] }>('stocks' + filter),
+      api<{ items: Stock[] }>('stocks'),
       api<{ items: History[] }>('history' + filter),
       api<{ items: Equipment[] }>('equipment'),
       api<{ items: Section[] }>('equipment/sections'),
       api<{ items: Category[] }>('categories'),
     ])
-    setSystems(a.items); setParts(b.items); setStocks(c.items); setHistory(d.items)
+    setSystems(a.items); setParts(b.items); setStocks(c.items); setStocksReady(true); setHistory(d.items)
     setEquipments(e.items); setSections(f.items); setCategories(g.items)
   }, [selected])
   useEffect(() => { api('health').then(load).catch(e => setError(String(e))) }, [load])
@@ -190,7 +209,8 @@ export default function App() {
   const partsById = new Map(parts.map(p => [p.id, p]))
   const filteredStocks = stocks.filter(row => {
     const part = partsById.get(row.part_id)
-    return part !== undefined && matchesClassifications(part, String(row.system_id)) &&
+    return (!selected || String(row.system_id) === selected) &&
+      part !== undefined && matchesClassifications(part, String(row.system_id)) &&
       [row.system, row.part_number, row.model_number, row.name].some(
         value => value.toLowerCase().includes(query.toLowerCase())
       )
@@ -254,7 +274,43 @@ export default function App() {
     setPartSearch(label(part))
     setPartPicker(false)
   }
-  const criticalCount = stocks.filter(x => x.alert).length
+  const alertStocks = stocks.filter(x => x.alert)
+  const filteredAlertStocks = filteredStocks.filter(x => x.alert)
+  const criticalCount = filteredAlertStocks.length
+  const alertSignature = alertStocks
+    .map(x => x.system_id + ':' + x.part_id)
+    .sort().join('|')
+  useEffect(() => {
+    if (!stocksReady || desktopNotifyChoice === 'off' || !alertSignature) {
+      lastNotifiedRef.current = null
+      return
+    }
+    if (lastNotifiedRef.current === alertSignature) return
+    lastNotifiedRef.current = alertSignature
+    void notifyDesktop(alertStocks.length)
+  }, [alertSignature, alertStocks.length, desktopNotifyChoice, stocksReady])
+  const toggleDesktopNotifications = async () => {
+    if (desktopNotifyChoice !== 'off') {
+      setDesktopNotifyChoice('off')
+      setNotice('デスクトップ通知を無効にしました')
+      return
+    }
+    const nativeAvailable = Boolean((window as NotificationWindow).pywebview?.api?.notify_low_stock)
+    if (!nativeAvailable && 'Notification' in window && Notification.permission !== 'granted') {
+      const result = await Notification.requestPermission()
+      if (result !== 'granted') {
+        setError('デスクトップ通知が許可されていません。画面内の在庫警告は引き続き表示します。')
+        return
+      }
+    }
+    if (!nativeAvailable && !('Notification' in window)) {
+      setError('この環境ではデスクトップ通知が使えません。画面内の在庫警告は引き続き表示します。')
+      return
+    }
+    setError('')
+    setDesktopNotifyChoice('on')
+    setNotice('デスクトップ通知を有効にしました')
+  }
   const eligibleAlertParts = parts.filter(p => !p.has_successor)
   const eligibleAlertCount = eligibleAlertParts.filter(
     p => !Object.hasOwn(alertDraft, p.id)
@@ -392,7 +448,7 @@ export default function App() {
     setVersions([])
     setEditor({ mode: 'create', values: { ...emptyPart, system_id: selected, part_number: partSearch.trim() } })
   }
-  const needSystem = tab === 'alerts' || tab === 'history' || tab === 'stock' || tab === 'parts' || tab === 'equipment'
+  const needSystem = tab === 'alerts' || tab === 'history' || tab === 'stock' || tab === 'low-stock' || tab === 'parts' || tab === 'equipment'
 
   return <div className="app">
     <aside className="sidebar">
@@ -400,7 +456,7 @@ export default function App() {
       <p className="nav-label">メニュー</p>
       <nav aria-label="メインメニュー">
         {([
-          { title: '在庫管理', ids: ['stock', 'history', 'alerts'] as View[], opened: inventoryMenuOpen, toggle: setInventoryMenuOpen },
+          { title: '在庫管理', ids: ['stock', 'low-stock', 'history', 'alerts'] as View[], opened: inventoryMenuOpen, toggle: setInventoryMenuOpen },
           { title: 'システム管理', ids: ['systems', 'equipment', 'categories', 'parts'] as View[], opened: systemMenuOpen, toggle: setSystemMenuOpen },
         ]).map(group => <details className="nav-group" key={group.title}
             open={group.opened} onToggle={e => group.toggle(e.currentTarget.open)}>
@@ -423,8 +479,20 @@ export default function App() {
     <main className="main">
       <div className="topbar">
         <div><span className="eyebrow">INVENTORY CONTROL</span><h1>{views.find(v => v.id === tab)?.label}</h1></div>
-        
+        <button className="button secondary notification-toggle" type="button" onClick={toggleDesktopNotifications}>
+          デスクトップ通知：{desktopNotifyChoice === 'off' ? 'OFF' : 'ON'}
+        </button>
       </div>
+      {error && <div className="message error" role="alert">{error}<button aria-label="エラーを閉じる" onClick={() => setError('')}>×</button></div>}
+      {notice && <div className="message success" role="status">{notice}<button aria-label="通知を閉じる" onClick={() => setNotice('')}>×</button></div>}
+      {stocksReady && alertStocks.length > 0 && <div className="low-stock-notice" role="alert">
+        <div><strong>下限在庫の警告：{alertStocks.length}件</strong>
+          <p>下限値以下の部品があります。対象のシステム・品番・不足数を確認してください。</p></div>
+        <button className="button secondary" type="button" onClick={() => {
+          setTab('low-stock'); setSelected(''); setQuery('')
+          setEquipmentFilter(''); setSectionFilter(''); setCategoryFilter('')
+        }}>下限在庫一覧を開く</button>
+      </div>}
       <div className="toolbar">
         {needSystem && <label className="field compact">対象システム
           <select value={selected} onChange={e => { setSelected(e.target.value); setEquipmentFilter(''); setSectionFilter('') }}>
@@ -433,7 +501,7 @@ export default function App() {
           </select>
         </label>}
         {tab !== 'alerts' && tab !== 'systems' && tab !== 'equipment' && tab !== 'categories' && <label className="field grow">検索<input value={query} onChange={e => setQuery(e.target.value)} placeholder="品番・型式・品名で検索" /></label>}
-        {(tab === 'parts' || tab === 'stock') && <>
+        {(tab === 'parts' || tab === 'stock' || tab === 'low-stock') && <>
           <label className="field compact">機器
             <select aria-label="機器で絞り込み" value={equipmentFilter} onChange={e => { setEquipmentFilter(e.target.value); setSectionFilter('') }}>
               <option value="">すべて</option>
@@ -479,8 +547,6 @@ export default function App() {
           {tab === 'alerts' && <button className="button primary" disabled={!selected || busy} onClick={submitAlerts}>変更を一括保存</button>}
         </div>
       </div>
-      {error && <div className="message error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}
-      {notice && <div className="message success" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
       {tab === 'stock' && <>
         <div className="stats">
           <div className="stat"><span>表示中の部品</span><strong>{filteredStocks.length}</strong></div>
@@ -491,6 +557,24 @@ export default function App() {
           <div className="table-wrap"><table><thead><tr><th>システム</th><th>品番</th><th>型式</th><th>品名</th><th className="right">現在庫</th><th className="right">下限値</th><th>最終更新</th><th>状態</th></tr></thead>
             <tbody>{filteredStocks.map(x => <tr key={x.system_id + ':' + x.part_id}><td>{x.system}</td><td className="mono">{x.part_number}</td><td className="mono">{x.model_number}</td><td>{x.name}</td><td className="right quantity">{x.quantity}</td><td className="right">{x.threshold ?? '—'}</td><td className="nowrap">{x.last_updated ? dateTime(x.last_updated) : '—'}</td><td>{x.alert ? <span className="chip bad">下限以下</span> : <span className="chip ok">正常</span>}</td></tr>)}</tbody></table></div>
           {!filteredStocks.length && <p className="empty">該当する在庫がありません。</p>}
+        </section>
+      </>}
+      {tab === 'low-stock' && <>
+        <div className="stats">
+          <div className="stat warning"><span>下限以下の部品</span><strong>{filteredAlertStocks.length}</strong></div>
+          <div className="stat"><span>補充が必要な数量の合計</span><strong>{filteredAlertStocks.reduce((sum, x) => sum + Math.max(0, (x.threshold ?? 0) - x.quantity), 0).toLocaleString()}</strong></div>
+          <div className="stat"><span>監視中の部品</span><strong>{filteredStocks.filter(x => x.threshold !== null).length}</strong></div>
+        </div>
+        <section className="panel"><div className="panel-head"><h2>下限在庫一覧</h2>
+          <span className="help">現在庫が下限値以下の部品のみ表示。現在庫＝下限値の場合も警告対象です。</span></div>
+          <div className="table-wrap"><table><thead><tr><th>システム</th><th>品番</th><th>型式</th><th>品名</th><th className="right">現在庫</th><th className="right">下限値</th><th className="right">不足数</th><th>状態</th></tr></thead>
+            <tbody>{filteredAlertStocks.map(x => <tr key={x.system_id + ':' + x.part_id}>
+              <td>{x.system}</td><td className="mono">{x.part_number}</td><td className="mono">{x.model_number}</td><td>{x.name}</td>
+              <td className="right quantity">{x.quantity}</td><td className="right">{x.threshold}</td>
+              <td className="right quantity">{Math.max(0, (x.threshold ?? 0) - x.quantity)}</td>
+              <td><span className="chip bad">{x.quantity === x.threshold ? '下限到達' : '下限未満'}</span></td>
+            </tr>)}</tbody></table></div>
+          {filteredAlertStocks.length === 0 && <p className="empty">下限値以下の部品はありません。</p>}
         </section>
       </>}
       {tab === 'history' && <section className="panel"><div className="panel-head"><h2>記録履歴</h2><span className="help">直近500件をID昇順で表示 / 訂正時は元履歴を保持</span></div>

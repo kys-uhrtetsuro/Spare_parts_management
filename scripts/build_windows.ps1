@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 python -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "Python依存のインストール失敗" }
+python -c "from windows_toasts import WindowsToaster, Toast; print('Windows toast runtime import OK')"
+if ($LASTEXITCODE -ne 0) { throw "Windows通知ライブラリが利用できません" }
 python scripts/prepare_icon.py
 if ($LASTEXITCODE -ne 0) { throw "アイコン生成失敗" }
 Push-Location frontend
@@ -24,7 +26,8 @@ $argsList = @(
     "--include-data-file=assets/spare_parts.ico=assets/spare_parts.ico",
     "--include-package=config", "--include-package=inventory", "--include-package=django",
     "--module-parameter=django-settings-module=config.settings",
-    "--include-package=waitress", "--include-package-data=webview",
+    "--include-package=waitress", "--include-package=windows_toasts",
+    "--include-package-data=webview",
     "--include-data-dir=$djangoLocale=django/conf/locale/ja",
     "--include-data-dir=frontend/dist=frontend/dist", "launcher.py"
 )
