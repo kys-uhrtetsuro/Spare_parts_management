@@ -3,6 +3,6 @@ waitress==3.0.2
 pywebview==6.2
 pandas==3.0.6
 openpyxl==3.1.5
-Nuitka==4.2.2
+Nuitka==4.3
 Pillow==12.3.0
 windows-toasts==1.3.1; platform_system == "Windows"

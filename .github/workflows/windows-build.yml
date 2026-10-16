@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 旧Windowsビルドを停止
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const {owner, repo} = context.repo;
@@ -64,18 +64,19 @@ jobs:
       NUITKA_CACHE_DIR: ${{ github.workspace }}\.nuitka-cache
     steps:
       - name: ソース取得
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
+          package-manager-cache: false
       - name: Nuitkaコンパイルキャッシュを復元
         id: nuitka-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           # Unique per run (immutable cache); previous compatible build is restored
@@ -139,12 +140,12 @@ jobs:
           }
       - name: Nuitkaコンパイルキャッシュを保存
         if: ${{ steps.nuitka-build.outcome == 'success' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.NUITKA_CACHE_DIR }}
           key: ${{ steps.nuitka-cache.outputs.cache-primary-key }}
       - name: Standalone成果物を保存
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SparePartsManagement-standalone
           path: build/SparePartsManagement-package/
@@ -187,10 +188,14 @@ jobs:
 
           $zipSize = (Get-Item $zip).Length
           $tag = "windows-$($sourceHead.Substring(0,12))"
-          $useReleaseAssets = $zipSize -gt 90MB
+          # Keep GitHub-recommended Git blob size below 50 MB; larger ZIPs are release assets.
+          $useReleaseAssets = $zipSize -gt 45MB
           if ($useReleaseAssets) {
-            gh release view $tag --json tagName *> $null
-            if ($LASTEXITCODE -eq 0) {
+            # 'release view' intentionally returns 1 for a missing tag; avoid native
+            # command errors being promoted to terminating PowerShell errors.
+            $releaseTags = @(gh release list --limit 100 --json tagName | ConvertFrom-Json | ForEach-Object { $_.tagName })
+            if ($LASTEXITCODE -ne 0) { throw '既存GitHub Releasesの取得失敗' }
+            if ($tag -in $releaseTags) {
               gh release upload $tag "$zip#SparePartsManagement-standalone.zip" --clobber
             } else {
               gh release create $tag "$zip#SparePartsManagement-standalone.zip" --target $sourceHead --title "Windows配布 $($sourceHead.Substring(0,12))" --notes "Nuitka standalone。ZIPを全展開してルートのEXEを起動してください。既存data/は維持してください。"
