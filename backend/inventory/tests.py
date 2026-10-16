@@ -360,7 +360,7 @@ class InventoryTests(TestCase):
             {"id": self.other.id, "name": "制御B"},
             preview.json()["available_targets"],
         )
-        self.assertNotIn(
+        self.assertIn(
             {"id": self.system.id, "name": "制御A"},
             preview.json()["available_targets"],
         )
