@@ -457,8 +457,6 @@ class InventoryTests(TestCase):
         workbook["__parts"]["A2"] = imported_part.id
         for sheet_name, columns in (
             ("__placements", ("B",)),
-            ("__stocks", ("B",)),
-            ("__alerts", ("B",)),
         ):
             ws = workbook[sheet_name]
             for row in range(2, ws.max_row + 1):
@@ -531,7 +529,7 @@ class InventoryTests(TestCase):
         original = b"".join(
             self.client.get(f"/api/export?system={self.system.pk}").streaming_content
         )
-        for column, value in [("E2", -2), ("B2", "FAKE-100")]:
+        for column, value in [("E2", -2), ("D2", "異なる品名")]:
             workbook = load_workbook(io.BytesIO(original))
             workbook["現在庫"][column] = value
             out = io.BytesIO()
@@ -615,6 +613,8 @@ class InventoryTests(TestCase):
             f"/api/export?system={self.system.pk}"
         ).streaming_content)))
         for sheet, headers in SCHEMAS.items():
+            if sheet not in book.sheetnames:
+                continue
             ws = book[sheet]
             for index, heading in enumerate(headers, 1):
                 ws.cell(1, index).value = heading
@@ -709,6 +709,85 @@ class InventoryTests(TestCase):
             self.assertEqual(balance(target.pk, part1.pk), 2)
             self.assertEqual(balance(target.pk, part2.pk), 3)
             self.assertEqual(balance(target.pk, part3.pk), 4)
+
+
+    def test_visible_sheet_alone_controls_quantities_and_thresholds(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .services import balance
+        self.movement("IN", 4)
+        replace_alerts(self.system, [{"part_id": self.part.pk, "threshold": 2}])
+        base = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+        book = load_workbook(io.BytesIO(base))
+        self.assertNotIn("__stocks", book.sheetnames)
+        self.assertNotIn("__alerts", book.sheetnames)
+        book["現在庫"]["E2"] = 11
+        book["現在庫"]["F2"] = 5
+        output = io.BytesIO()
+        book.save(output)
+        book.close()
+        reply = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("在庫のみ編集.xlsx", output.getvalue()),
+            "system_name": "在庫編集先",
+        })
+        self.assertEqual(reply.status_code, 201, reply.content)
+        target = SystemMaster.objects.get(name="在庫編集先")
+        self.assertEqual(balance(target.pk, self.part.pk), 11)
+        self.assertEqual(StockAlertSetting.objects.get(
+            system=target, part=self.part).threshold, 5)
+
+    def test_visible_sheet_new_row_creates_part_and_deleted_row_is_ignored(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .services import balance
+        self.movement("IN", 3)
+        book = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        source = book["現在庫"]
+        source.delete_rows(2)
+        source.append(["制御A", 88701, None, "Excelで追加", 6, 4, None])
+        dest = io.BytesIO()
+        book.save(dest)
+        book.close()
+        response = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("行追加.xlsx", dest.getvalue()),
+            "system_name": "追加先",
+        })
+        self.assertEqual(response.status_code, 201, response.content)
+        new_sys = SystemMaster.objects.get(name="追加先")
+        created = PartMaster.objects.get(part_number="88701", model_number="")
+        self.assertEqual(created.name, "Excelで追加")
+        self.assertEqual(balance(new_sys.pk, created.pk), 6)
+        self.assertEqual(balance(new_sys.pk, self.part.pk), 0)
+        self.assertEqual(StockAlertSetting.objects.get(
+            system=new_sys, part=created).threshold, 4)
+
+    def test_excel_new_row_rejects_duplicate_part_and_ambiguous_name(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        self.movement("IN", 3)
+        base = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+        for scenario in ("duplicate", "name-mismatch"):
+            book = load_workbook(io.BytesIO(base))
+            ws = book["現在庫"]
+            if scenario == "duplicate":
+                ws.append(["制御A", "P100", "V1", "センサ", 1, None, None])
+            else:
+                ws["D2"] = "品名相違"
+            output = io.BytesIO()
+            book.save(output)
+            book.close()
+            response = self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile("不一致.xlsx", output.getvalue()),
+                "system_name": "反映しない",
+            })
+            self.assertEqual(response.status_code, 400, response.content)
+            self.assertFalse(SystemMaster.objects.filter(name="反映しない").exists())
 
     def test_excel_numeric_cells_do_not_silently_discard_leading_zero(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -938,14 +1017,29 @@ class InventoryTests(TestCase):
             f"/api/export?system={self.system.pk}"
         ).streaming_content)
         book = load_workbook(io.BytesIO(stream))
-        self.assertEqual(book["__manifest"]["B2"].value, "SPARE_PARTS_SNAPSHOT_V3")
+        self.assertEqual(book["__manifest"]["B2"].value, "SPARE_PARTS_SNAPSHOT_V4")
         self.assertEqual(book["__placements"].max_row, 3)
-        for label, content in (("複製V3", stream), ("複製V2", None)):
-            if content is None:
-                book["__manifest"]["B2"] = "SPARE_PARTS_SNAPSHOT_V2"
-                dest = io.BytesIO()
-                book.save(dest)
-                content = dest.getvalue()
+        self.assertNotIn("__stocks", book.sheetnames)
+        self.assertNotIn("__alerts", book.sheetnames)
+        from .transfer import SCHEMAS
+        for label, version in (("複製V4", "SPARE_PARTS_SNAPSHOT_V4"),
+                               ("複製V3", "SPARE_PARTS_SNAPSHOT_V3"),
+                               ("複製V2", "SPARE_PARTS_SNAPSHOT_V2")):
+            book["__manifest"]["B2"] = version
+            if version != "SPARE_PARTS_SNAPSHOT_V4" and "__stocks" not in book.sheetnames:
+                old_stock = book.create_sheet("__stocks")
+                old_stock.append(SCHEMAS["__stocks"])
+                old_stock.append((self.system.pk, self.part.pk, 999))
+                old_stock.sheet_state = "hidden"
+                old_alert = book.create_sheet("__alerts")
+                old_alert.append(SCHEMAS["__alerts"])
+                old_alert.append((self.system.pk, self.part.pk, 99))
+                old_alert.sheet_state = "hidden"
+            if version == "SPARE_PARTS_SNAPSHOT_V2":
+                book["__stocks"]["C2"] = -99
+            dest = io.BytesIO()
+            book.save(dest)
+            content = dest.getvalue()
             result = self.client.post("/api/import/apply", data={
                 "file": SimpleUploadedFile("部品移植.xlsx", content), "system_name": label,
             })
@@ -959,6 +1053,8 @@ class InventoryTests(TestCase):
             })
             from .services import balance
             self.assertEqual(balance(new.pk, self.part.pk), 7)
+            self.assertFalse(StockAlertSetting.objects.filter(system=new, part=self.part).exists())
+        book.close()
 
     def test_equipment_is_system_scoped_and_parts_shared(self):
         a = EquipmentMaster.objects.create(system=self.system, name="仕分設備")

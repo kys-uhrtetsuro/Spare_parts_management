@@ -485,6 +485,20 @@ def read_snapshot(blob):
                     "Excelのシステム情報と一致しません"
                 )
             if pid is None:
+                # Excel numeric formatting can drop leading zeros irreversibly.
+                # Never silently turn "00123" into a different part "123".
+                if part_number.isdecimal() and any(
+                    key[0].isdecimal()
+                    and (key[0].lstrip("0") or "0") == (part_number.lstrip("0") or "0")
+                    and key[0] != part_number and key[1] == model_number
+                    for key in part_by_identity
+                ):
+                    raise InputError(
+                        f"「現在庫」シート B{rownum}（品番）、"
+                        f"入力値：{cell_value_label(vals.get('品番'))}。"
+                        "「部品情報」に先頭ゼロを含む類似品番があります。"
+                        "Excelで失われた桁は復元できないため、品番を文字列で正しく指定してください"
+                    )
                 # A new visible row has no hidden ID; allocate an import-local
                 # negative ID, never an ID from the destination database.
                 try:
