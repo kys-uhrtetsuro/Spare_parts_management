@@ -6,7 +6,9 @@ historical movements from the source database.
 """
 import hashlib
 import io
+import math
 import zipfile
+from decimal import Decimal
 from collections import defaultdict
 from datetime import datetime
 
@@ -261,6 +263,23 @@ def _table(book, name):
     return results
 
 
+def excel_identifier(value, label, maximum, required=True):
+    """Normalize Excel numeric cells before matching source and destination parts.
+
+    Spreadsheet cell formatting alone does not change stored cell types.
+    Do not interpret boolean/date cells as identifiers or silently zero-pad IDs.
+    """
+    if isinstance(value, bool):
+        raise InputError(f"{label}には文字列または数値を入力してください")
+    if isinstance(value, int):
+        value = str(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise InputError(f"{label}には有限の数値を入力してください")
+        value = str(int(value)) if value.is_integer() else format(Decimal(str(value)), "f")
+    return text_field(value, label, maximum, required)
+
+
 def _records(rows, required_name, *, columns):
     mapping = {}
     for r in rows:
@@ -269,8 +288,10 @@ def _records(rows, required_name, *, columns):
             raise InputError(f"{required_name} IDが重複しています")
         for name, length, mandatory in columns:
             label = FIELD_LABELS[(required_name, name)]
-            r[name] = text_field(r.get(name) if r.get(name) is not None else "",
-                                 label, length, mandatory)
+            value = r.get(name) if r.get(name) is not None else ""
+            validate = (excel_identifier if required_name == "部品"
+                        and name in ("part_number", "model_number") else text_field)
+            r[name] = validate(value, label, length, mandatory)
         mapping[rid] = r
     return mapping
 
@@ -415,7 +436,13 @@ def read_snapshot(blob):
             sid = sys_by_name.get(vals.get("システム"))
             # An empty string in the export becomes an empty Excel cell (None).
             model_number = "" if vals.get("型式") is None else vals["型式"]
-            pid = part_by_identity.get((vals.get("品番"), model_number))
+            part_number = excel_identifier(
+                vals.get("品番"), f"{rownum}行目の品番", 160
+            )
+            model_number = excel_identifier(
+                model_number, f"{rownum}行目の型式", 160, False
+            )
+            pid = part_by_identity.get((part_number, model_number))
             if sid is None or pid is None:
                 raise InputError(f"{rownum}行目のシステムまたは部品がメタデータと一致しません")
             pair = (sid, pid)

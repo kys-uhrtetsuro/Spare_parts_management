@@ -648,6 +648,88 @@ class InventoryTests(TestCase):
         self.assertIn("型式", response.json()["error"])
         self.assertNotIn("model_number", response.json()["error"])
 
+
+    def test_numeric_excel_part_identifiers_are_read_as_strings(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        from .services import balance
+        from .transfer import excel_identifier
+        self.assertEqual(excel_identifier(123, "品番", 160), "123")
+        self.assertEqual(excel_identifier(123.0, "型式", 160), "123")
+        self.assertEqual(excel_identifier(12.5, "型式", 160), "12.5")
+        self.assertEqual(excel_identifier("00123", "品番", 160), "00123")
+        with self.assertRaisesRegex(InputError, "品番"):
+            excel_identifier(True, "品番", 160)
+
+        part1 = create_part({"part_number": "123", "model_number": "77", "name": "数値品番"})
+        part2 = create_part({"part_number": "456", "model_number": "12.5", "name": "小数型式"})
+        part3 = create_part({"part_number": "789", "name": "型式無し"})
+        for part, amount in [(part1, 2), (part2, 3), (part3, 4)]:
+            self.movement("IN", amount, part=part)
+        baseline = b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)
+
+        # Each source can be copied independently, resulting in different
+        # numeric cell types in the hidden and visible sheets.
+        for label, hidden, visible in [
+            ("内部", True, False),
+            ("現在庫", False, True),
+            ("両方", True, True),
+        ]:
+            book = load_workbook(io.BytesIO(baseline))
+            for row in range(2, 5):
+                if hidden:
+                    parts = book["__parts"]
+                    parts.cell(row, 2).value = int(parts.cell(row, 2).value)
+                    if row == 2:
+                        parts.cell(row, 3).value = 77.0
+                    elif row == 3:
+                        parts.cell(row, 3).value = 12.5
+                    else:
+                        parts.cell(row, 3).value = None
+                if visible:
+                    sheet = book["現在庫"]
+                    sheet.cell(row, 2).value = int(sheet.cell(row, 2).value)
+                    if row == 2:
+                        sheet.cell(row, 3).value = 77
+                    elif row == 3:
+                        sheet.cell(row, 3).value = 12.5
+                    else:
+                        sheet.cell(row, 3).value = None
+            output = io.BytesIO()
+            book.save(output)
+            book.close()
+            response = self.client.post("/api/import/apply", data={
+                "file": SimpleUploadedFile(f"数値セル{label}.xlsx", output.getvalue()),
+                "system_name": f"数値セル取込{label}",
+            })
+            self.assertEqual(response.status_code, 201, response.content)
+            target = SystemMaster.objects.get(name=f"数値セル取込{label}")
+            self.assertEqual(balance(target.pk, part1.pk), 2)
+            self.assertEqual(balance(target.pk, part2.pk), 3)
+            self.assertEqual(balance(target.pk, part3.pk), 4)
+
+    def test_excel_numeric_cells_do_not_silently_discard_leading_zero(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import load_workbook
+        padded = create_part({"part_number": "00123", "name": "桁保持"})
+        self.movement("IN", 1, part=padded)
+        book = load_workbook(io.BytesIO(b"".join(self.client.get(
+            f"/api/export?system={self.system.pk}"
+        ).streaming_content)))
+        book["現在庫"]["B2"] = 123
+        result = io.BytesIO()
+        book.save(result)
+        book.close()
+        response = self.client.post("/api/import/apply", data={
+            "file": SimpleUploadedFile("先頭0消失.xlsx", result.getvalue()),
+            "system_name": "別システム",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("メタデータと一致しません", response.json()["error"])
+        self.assertFalse(SystemMaster.objects.filter(name="別システム").exists())
+
     def test_excel_includes_zero_when_alerted(self):
         replace_alerts(self.system, [{"part_id": self.part.id, "threshold": 1}])
         response = self.client.get("/api/export")
