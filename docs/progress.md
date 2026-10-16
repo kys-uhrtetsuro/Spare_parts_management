@@ -199,8 +199,6 @@ Nexusとは独立したプロジェクトとして管理する。
 - [実機確認待ち] pywebview起動、入出庫、SQLite既存データ、終了時のロックとセキュリティ製品の検知状況
 - [ブランチ] feature/standalone-src-launcher（ReleaseへPR反映）
 
-- Standalone配布ビルド元: 9d55e481f82cfdb6507429916266576a567081a9
-- Standalone配布ZIP: 64260119 bytes（Git制限超過時はGitHub Releases）
 
 
 ## Windows Cコンパイル進捗の表示（2026-10-15）
@@ -228,3 +226,7 @@ Nexusとは独立したプロジェクトとして管理する。
 - [CI検証済み] Django/React・Playwrightの下限一覧・警告導線・Windows通知ブリッジ単体テスト成功（CI #38827622732 / #38827627712）
 - [検証待ち] ReleaseでのWindows配布ビルドと、ユーザーWindows端末でのOSトースト通知（Windows通知設定の影響あり）
 - [統合済み] feature/low-stock-notifications → Release（PR #12、d4c1f2a4）
+
+- Standalone配布ビルド元: d4c1f2a49fc9944ababa3898f00dcc257d40b82a
+- Standalone配布ZIP: 65005535 bytes（Git制限超過時はGitHub Releases）
+
